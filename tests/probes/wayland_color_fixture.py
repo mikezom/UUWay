@@ -28,9 +28,10 @@ def main():
         if options.virtual_output:
             parser.error('Cursor-cycle fixture is for one existing output only')
         window.set_decorated(False)
-        window.fullscreen()
     window.set_default_size(640, 360)
-    window.set_resizable(options.virtual_output)
+    window.set_resizable(options.virtual_output or options.cursor_cycle)
+    if options.cursor_cycle:
+        window.fullscreen()
     drawing = Gtk.GLArea() if options.gpu else Gtk.DrawingArea()
     if options.gpu:
         drawing.set_required_version(3, 2)
@@ -46,7 +47,7 @@ def main():
     window.add(drawing)
     display = Gdk.Display.get_default()
     focus_pointer = None
-    cursor_evidence = dict(cursor_owned_ticks=0, cursor_changes=0, fullscreen_observed=False)
+    cursor_evidence = dict(cursor_owned_ticks=0, cursor_changes=0, cursor_motions=0, fullscreen_observed=False)
     if options.cursor_cycle:
         if display.get_n_monitors() != 1:
             raise RuntimeError('Cursor-cycle fixture requires one output')
@@ -57,9 +58,11 @@ def main():
         focus_pointer = OwnedFocusPointer(Path(__file__).resolve().parents[2])
 
         def nudge_pointer():
-            # No clicks or text. One tiny relative movement refreshes native
-            # pointer focus after our fullscreen surface has mapped.
-            focus_pointer.send([(1, 1, 0)])
+            # Move into the owned fullscreen fixture so cursor changes are
+            # observed even when the pointer initially belongs to another app.
+            if not window.get_window().get_state() & Gdk.WindowState.FULLSCREEN:
+                return True
+            focus_pointer.send([(0x8001, 32768, 32768)])
             return False
         GLib.timeout_add(1000, nudge_pointer)
 
@@ -69,6 +72,11 @@ def main():
                 pointed, _, _ = display.get_default_seat().get_pointer().get_window_at_position()
                 owned = pointed is not None and pointed.get_toplevel() == window.get_window()
                 cursor_evidence['cursor_owned_ticks'] += int(owned)
+                # The input helper has a 15-second lifetime. Keep synthetic
+                # motion within it and entirely inside this owned surface.
+                if owned and GLib.get_monotonic_time() - cycle_start < 12000000:
+                    focus_pointer.send([(1, 1 if cycle[0] % 2 else -1, 0)])
+                    cursor_evidence['cursor_motions'] += 1
                 cursor_evidence['fullscreen_observed'] |= bool(window.get_window().get_state() & Gdk.WindowState.FULLSCREEN)
                 shape = ('default', 'text', 'pointer', 'none')[cycle[0] % 4]
                 surface.set_cursor(Gdk.Cursor.new_from_name(display, shape))

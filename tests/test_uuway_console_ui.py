@@ -88,6 +88,63 @@ class ConsoleInteractionTests(unittest.TestCase):
         self.ui.save_input()
         self.assertFalse(self.ui._close_requested())
 
+    def test_close_to_tray_preserves_unsaved_input(self):
+        from unittest.mock import Mock
+        self.ui.tray = Mock(closed=False)
+        self.ui.wheel.set_value(140)
+        self.assertTrue(self.ui._close_requested())
+        self.assertFalse(self.ui.window.get_visible())
+        self.assertEqual(self.ui.wheel.get_value(), 140)
+        self.assertFalse(self.ui.closed)
+
+    def make_tray(self):
+        from unittest.mock import Mock
+        indicator = Mock()
+        with patch.object(console, '_service_properties', return_value=self.snapshot['services']):
+            tray = console.Tray(self.ui, self.app, indicator)
+        self.ui.tray = tray
+        self.addCleanup(tray.close)
+        return tray
+
+    def test_tray_status_actions_and_reopen(self):
+        tray = self.make_tray()
+        self.assertFalse(tray.items['start'].get_sensitive())
+        self.assertTrue(tray.items['stop'].get_sensitive())
+        self.ui._close_requested()
+        tray.items['open'].activate()
+        self.assertTrue(self.ui.window.get_visible())
+        tray.update('inactive')
+        self.assertTrue(tray.items['start'].get_sensitive())
+        self.assertFalse(tray.items['stop'].get_sensitive())
+        tray.update(busy=True)
+        self.assertFalse(tray.items['exit'].get_sensitive())
+
+    def test_tray_exit_stops_bridge_before_quitting(self):
+        from unittest.mock import Mock
+        tray = self.make_tray()
+        with patch.object(self.ui, '_confirm', return_value=True), \
+                patch.object(console.subprocess, 'run', return_value=Mock(returncode=0)) as run, \
+                patch.object(tray, 'quit') as quit:
+            tray.items['exit'].activate()
+        run.assert_any_call(['/usr/bin/systemctl', '--user', 'stop', 'uu-native-bridge.service'],
+                            stdin=console.subprocess.DEVNULL, stdout=console.subprocess.DEVNULL,
+                            stderr=console.subprocess.DEVNULL, timeout=45, check=False)
+        quit.assert_called_once()
+
+    def test_tray_cancel_or_stop_failure_does_not_quit(self):
+        from unittest.mock import Mock
+        tray = self.make_tray()
+        with patch.object(self.ui, '_confirm', return_value=False), \
+                patch.object(console.subprocess, 'run') as run, patch.object(tray, 'quit') as quit:
+            tray.items['exit'].activate()
+            run.assert_not_called()
+            quit.assert_not_called()
+        with patch.object(self.ui, '_confirm', return_value=True), \
+                patch.object(console.subprocess, 'run', return_value=Mock(returncode=1)), \
+                patch.object(tray, 'quit') as quit:
+            tray.items['exit'].activate()
+            quit.assert_not_called()
+
     def test_auto_save_rolls_back_selection_when_write_fails(self):
         with patch.object(console, "_write_json", side_effect=OSError("fixture full disk")):
             self.ui.backend.set_active(1)

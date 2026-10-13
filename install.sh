@@ -26,7 +26,7 @@ with_console=1
 packages=(build-essential gcc-mingw-w64-x86-64 meson ninja-build pkg-config jq curl git ripgrep
           libjson-c-dev libx11-dev libxfixes-dev libpipewire-0.3-dev libspa-0.2-dev libvulkan-dev glslang-tools
           libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libfcitx5core-dev libfcitx5utils-dev
-          libei-dev fcitx5-modules-dev xvfb xclip python3-gi python3-dbus gir1.2-gtk-3.0 gir1.2-atspi-2.0)
+          libei-dev fcitx5-modules-dev xvfb xclip python3-gi python3-dbus gir1.2-gtk-3.0 gir1.2-atspi-2.0 gir1.2-ayatanaappindicator3-0.1)
 
 usage() {
     cat <<'EOF'
@@ -118,6 +118,9 @@ step_title 1 "检查环境并安装依赖"
 ((EUID != 0)) || die "请不要用 sudo 或 root 运行；脚本会在需要时自己调用 sudo。"
 # shellcheck source=/dev/null
 . /etc/os-release
+if [[ "${ID:-}" == manjaro ]]; then
+    die "Manjaro KDE 尚不能使用 Ubuntu 一键源码构建：此脚本安装 WineHQ 11.0 和构建依赖时依赖 apt/dpkg。不会在 Manjaro 上运行 apt。请先阅读 docs/manjaro-kde.md，并用 /usr/bin/python3 scripts/uuway_cli.py doctor 检查本机环境。"
+fi
 if [[ "${ID:-}" == ubuntu && "${VERSION_ID:-}" == 24.04 ]]; then
     ok "Ubuntu 24.04"
 else

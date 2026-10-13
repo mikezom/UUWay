@@ -3,9 +3,9 @@
 Description=UU native Wayland GPU bridge
 After=graphical-session.target
 Wants=uu-native-text.service
-Wants=uu-native-display.service
+@DISPLAY_WANTS@
 After=uu-native-text.service
-After=uu-native-display.service
+@DISPLAY_AFTER@
 PartOf=graphical-session.target
 StartLimitIntervalSec=300
 StartLimitBurst=5
@@ -13,7 +13,7 @@ StartLimitBurst=5
 [Service]
 Type=notify
 NotifyAccess=main
-ExecStart=/usr/bin/python3 "@ROOT@/scripts/uu-native-service.py" --config "%h/.config/uurb/native-runtime.json"@DISPLAY_POLICY@ --allow-display-reconfigure
+ExecStart=/usr/bin/python3 "@ROOT@/scripts/uu-native-service.py" --config "%h/.config/uurb/native-runtime.json"@DISPLAY_POLICY@@DISPLAY_RECONFIGURE@
 Restart=on-failure
 RestartSec=10
 WatchdogSec=30

@@ -6,11 +6,12 @@
 #include <wine/server.h>
 #include <dlfcn.h>
 #include <stdio.h>
+#include "native_wine_unix_runtime.h"
 
 int uurb_wine11_gpu_fd(void *shared, void **opened)
 {
     _Static_assert(SERVER_PROTOCOL_VERSION == 930, "Wine protocol version mismatch");
-    void *ntdll = dlopen("/opt/wine-stable/lib/wine/x86_64-unix/ntdll.so", RTLD_NOW | RTLD_NOLOAD);
+    void *ntdll = uurb_loaded_wine_runtime();
     if (!ntdll) { fprintf(stderr, "Pinned Wine Unix runtime is not loaded\n"); return -1; }
     unsigned int (*server_call)(void *) = dlsym(ntdll, "wine_server_call");
     unsigned int (*to_fd)(HANDLE, unsigned int, int *, unsigned int *) =

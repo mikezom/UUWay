@@ -58,6 +58,23 @@ class ConsoleInstallTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Changed UUWay console release"):
             self.install()
 
+    def test_login_tray_tracks_the_current_immutable_release(self):
+        first = self.install()
+        entry = self.home / '.config/autostart/uuway-tray.desktop'
+        self.assertIn(f'Exec="{first / "uuway-console"}" --tray', entry.read_text())
+        installer.SOURCE.write_bytes(installer.SOURCE.read_bytes() + b'# updated\n')
+        second = self.install()
+        self.assertNotEqual(first, second)
+        self.assertIn(f'Exec="{second / "uuway-console"}" --tray', entry.read_text())
+
+    def test_unrelated_login_entry_is_preserved(self):
+        entry = self.home / '.config/autostart/uuway-tray.desktop'
+        entry.parent.mkdir(mode=0o700, parents=True)
+        entry.write_text('[Desktop Entry]\nName=Existing\n')
+        with self.assertRaisesRegex(ValueError, 'unrelated menu entry'):
+            self.install()
+        self.assertIn('Name=Existing', entry.read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -108,6 +108,7 @@ class TextPortal:
     def start(self):
         if self.session:
             raise RuntimeError('Text Portal session already exists')
+        restore.register_portal_app(self.bus)
         remote = self.call('org.freedesktop.DBus.Properties', 'GetAll', '(s)', (REMOTE,)).unpack()[0]
         clipboard = self.call('org.freedesktop.DBus.Properties', 'GetAll', '(s)', (CLIPBOARD,)).unpack()[0]
         if remote.get('version', 0) < 2 or clipboard.get('version', 0) < 1 or not remote.get('AvailableDeviceTypes', 0) & 1:

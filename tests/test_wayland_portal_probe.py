@@ -3,6 +3,7 @@ import importlib.util
 import os
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +15,30 @@ spec.loader.exec_module(probe)
 
 
 class WaylandPortalProbeTests(unittest.TestCase):
+    def test_kde_registers_installed_identity_once_before_portal_requests(self):
+        from gi.repository import Gio
+        bus = Mock()
+        bus.get_unique_name.return_value = ':test.registry'
+        with patch.dict(os.environ, XDG_CURRENT_DESKTOP='KDE', XDG_SESSION_TYPE='wayland'), \
+                patch.object(Gio.DesktopAppInfo, 'new', return_value=Mock()), \
+                patch.object(probe, 'REGISTERED_CONNECTIONS', set()):
+            self.assertTrue(probe.register_portal_app(bus))
+            self.assertTrue(probe.register_portal_app(bus))
+        bus.call_sync.assert_called_once()
+        args = bus.call_sync.call_args.args
+        self.assertEqual(args[2:4], ('org.freedesktop.host.portal.Registry', 'Register'))
+        self.assertEqual(args[4].unpack(), ('uuway', {}))
+
+    def test_other_desktops_and_uninstalled_probe_keep_existing_identity(self):
+        from gi.repository import Gio
+        bus = Mock()
+        with patch.dict(os.environ, XDG_CURRENT_DESKTOP='GNOME', XDG_SESSION_TYPE='wayland'):
+            self.assertFalse(probe.register_portal_app(bus))
+        with patch.dict(os.environ, XDG_CURRENT_DESKTOP='KDE', XDG_SESSION_TYPE='wayland'), \
+                patch.object(Gio.DesktopAppInfo, 'new', return_value=None):
+            self.assertFalse(probe.register_portal_app(bus))
+        bus.call_sync.assert_not_called()
+
     def test_cursor_policy_is_explicit_and_capability_checked(self):
         self.assertEqual(probe.cursor_mode_value('embedded', 7), 2)
         self.assertEqual(probe.cursor_mode_value('hidden', 7), 1)

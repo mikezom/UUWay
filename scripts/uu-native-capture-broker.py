@@ -15,10 +15,13 @@ import socket
 import stat
 import struct
 import subprocess
+import sys
 import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from desktop_backend import plasma_wayland
 _spec = importlib.util.spec_from_file_location('capture_runtime_state', ROOT / 'scripts/native_runtime_state.py')
 state_tools = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(state_tools)
@@ -242,8 +245,7 @@ def producer_command(restore_state, channel, duration, cursor_mode, cursor_fd=No
             '--gpu-relay-fd', str(channel), '--duration-seconds', str(duration),
             '--cursor-mode', cursor_mode]
     if cursor_fd is not None:
-        # This native trial is scoped to Mutter DisplayConfig / one monitor.
-        command.extend(['--cursor-backend', 'mutter'])
+        command.extend(['--cursor-backend', 'spa' if plasma_wayland() else 'mutter'])
         command.extend(['--cursor-state-fd', str(cursor_fd)])
     if status_fd is not None:
         if status_fd < 3 or status_fd in (channel, cursor_fd):

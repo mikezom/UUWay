@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=UUWay 托盘
+Name[en]=UUWay Tray
+Exec=/usr/bin/uuway-console --tray
+Icon=uuway
+Terminal=false
+StartupNotify=false

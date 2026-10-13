@@ -9,9 +9,14 @@ struct uurb_capture_timing {
     unsigned samples, invalid, gaps[4];
 };
 
+static inline int uurb_capture_timing_fresh(const struct uurb_capture_timing *s, int64_t timestamp)
+{
+    return timestamp >= 0 && (!s->samples || (uint64_t)timestamp > s->last_ns);
+}
+
 static inline void uurb_capture_timing_add(struct uurb_capture_timing *s, int64_t timestamp)
 {
-    if (timestamp < 0 || (s->samples && (uint64_t)timestamp <= s->last_ns)) {
+    if (!uurb_capture_timing_fresh(s, timestamp)) {
         s->invalid++;
         return;
     }

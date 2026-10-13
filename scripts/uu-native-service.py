@@ -10,9 +10,12 @@ import shlex
 import signal
 import shutil
 import subprocess
+import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from desktop_backend import plasma_wayland
 spec = importlib.util.spec_from_file_location('native_service_trial', ROOT / 'scripts/uu-native-trial.py')
 trial = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(trial)
@@ -536,6 +539,8 @@ def text_endpoint(config, config_directory):
 
 
 def run(config_path, preserve_display_session=False, allow_display_reconfigure=False):
+    if plasma_wayland() and (preserve_display_session or allow_display_reconfigure):
+        raise ValueError('KDE display reconfiguration has no rollback backend')
     trial.private_directory(config_path.parent)
     config = trial.state_tools.read_private(config_path)
     names = {'schema', 'prefix', 'bundle', 'restore_state', 'state_parent', 'text_socket', 'cursor_mode'}
@@ -554,7 +559,7 @@ def run(config_path, preserve_display_session=False, allow_display_reconfigure=F
     # complete.  The native bridge is read-only by default; only an explicit
     # opt-in enables remote writes to Mutter.
     display_socket = (Path(config['state_parent']) / 'display.sock'
-                      if verified.get('native_display_included') else None)
+                      if verified.get('native_display_included') and not plasma_wayland() else None)
     preserve_display_session = bool(preserve_display_session and allow_display_reconfigure)
     backend, endpoint = text_configuration(config, config_path.parent)
     stopping = False

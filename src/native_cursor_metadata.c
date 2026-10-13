@@ -39,9 +39,11 @@ int uurb_cursor_only_buffer(struct spa_buffer *buffer)
     struct spa_meta_header *header = spa_buffer_find_meta_data(buffer, SPA_META_Header, sizeof(*header));
     if (!header || (header->flags & SPA_META_HEADER_FLAG_CORRUPTED)) return 0;
     for (uint32_t i = 0; i < buffer->n_datas; ++i)
-        if (!buffer->datas[i].chunk || buffer->datas[i].chunk->size) return 0;
-    /* Mutter 46 deliberately marks zero-size cursor-only VIDEO chunks as
-     * CORRUPTED. That flag must not discard valid independent cursor metadata.
+        if (!buffer->datas[i].chunk || (buffer->datas[i].chunk->size &&
+            !(buffer->datas[i].chunk->flags & SPA_CHUNK_FLAG_CORRUPTED))) return 0;
+    /* KWin marks cursor-only VIDEO chunks CORRUPTED without clearing their
+     * allocated size; Mutter uses zero-size chunks with the same flag.
+     * Neither invalidates independent cursor metadata in a valid header.
      * No video FD/stride is consumed on this path, and no frame is encoded. */
     return 1;
 }

@@ -103,6 +103,7 @@ class PackageIsolationTests(unittest.TestCase):
             for backend, capable in [('fcitx', True), ('fcitx', False), ('portal', True)]:
                 service.trial.state_tools.write_private(root / 'text-backend.json', dict(version=1, backend=backend))
                 with self.subTest(backend=backend, capable=capable), \
+                        patch.object(service, 'plasma_wayland', return_value=False), \
                         patch.object(service.trial.bundle_tools, 'verify', return_value={
                             'native_ime_deferred_start_included': capable,
                             'native_display_included': True}), \
@@ -120,7 +121,7 @@ class PackageIsolationTests(unittest.TestCase):
             # merely passing the legacy preserve-display policy.
             with patch.object(service.trial.bundle_tools, 'verify', return_value={
                 'native_ime_deferred_start_included': True,
-                'native_display_included': True}), \
+                'native_display_included': True}), patch.object(service, 'plasma_wayland', return_value=False), \
                     patch.object(service.trial, 'run') as launch:
                 service.run(root / 'native-runtime.json', preserve_display_session=True)
                 args, _ = launch.call_args
@@ -483,6 +484,28 @@ class PackageIsolationTests(unittest.TestCase):
                 installer.install(bundle, prefix, state/'portal.json', state, state/'text.sock',
                                   preserve_display_session=False)
                 self.assertFalse(installer.existing_display_policy(main.read_text()))
+
+    def test_kde_service_has_no_mutter_dependency_or_display_write_permission(self):
+        spec=importlib.util.spec_from_file_location('kde_installer', ROOT/'scripts/install-uu-native-service.py')
+        installer=importlib.util.module_from_spec(spec);spec.loader.exec_module(installer)
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);self.fixture(root)
+            with patch.object(package, 'ROOT', root):
+                bundle=Path(package.package(root/'releases', with_input=True)['bundle'])
+            prefix=root/'prefix';prefix.mkdir(mode=0o700)
+            state=root/'state';state.mkdir(mode=0o700)
+            with patch.object(installer.Path, 'home', return_value=root), contextlib.redirect_stdout(io.StringIO()):
+                installer.install(bundle, prefix, state/'portal.json', state, state/'text.sock',
+                                  'metadata', kde_readonly=True)
+                with self.assertRaisesRegex(ValueError, 'KDE'):
+                    installer.install(bundle, prefix, state/'portal.json', state, state/'text.sock',
+                                      preserve_display_session=True, kde_readonly=True)
+            units=root/'.config/systemd/user'
+            bridge=(units/'uu-native-bridge.service').read_text()
+            self.assertNotIn('uu-native-display.service', bridge)
+            self.assertNotIn('--allow-display-reconfigure', bridge)
+            self.assertNotIn('@DISPLAY_', bridge)
+            self.assertFalse((units/'uu-native-display.service').exists())
 
     def test_managed_display_policy_does_not_guess_from_comments_or_unknown_options(self):
         spec = importlib.util.spec_from_file_location('policy_installer', ROOT/'scripts/install-uu-native-service.py')

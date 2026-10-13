@@ -389,6 +389,7 @@ class PersistentTerminalSessionTests(NativeTerminalBrokerTests):
         for version in (1, 2):
             with self.subTest(protocol=version):
                 client = self.viewer(port, version)
+                self.shell_pid(client)  # Login shell startup time depends on the user's zsh/bash profile.
                 self.send_input(client, rb"printf 'HELD\033]30'; sleep 2" + b"\n")
                 # Well before the sleep ends, so the bytes came from the idle release.
                 self.assertIn(b"HELD\x1b]30", self.read_until(client, b"HELD\x1b]30", 1.2))

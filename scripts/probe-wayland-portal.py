@@ -18,6 +18,25 @@ ROOT = Path(__file__).resolve().parents[1]
 SERVICE = 'org.freedesktop.portal.Desktop'
 PATH = '/org/freedesktop/portal/desktop'
 SCREENCAST = 'org.freedesktop.portal.ScreenCast'
+REGISTERED_CONNECTIONS = set()
+
+
+def register_portal_app(bus):
+    # Anonymous host peers cannot reliably restore KDE sharing permissions.
+    # Register our installed desktop identity before making any Portal call.
+    desktops = os.environ.get('XDG_CURRENT_DESKTOP', '').upper().split(':')
+    if os.environ.get('XDG_SESSION_TYPE') != 'wayland' or 'KDE' not in desktops:
+        return False
+    from gi.repository import Gio, GLib
+    if Gio.DesktopAppInfo.new('uuway.desktop') is None:
+        return False
+    name = bus.get_unique_name()
+    if name not in REGISTERED_CONNECTIONS:
+        bus.call_sync(SERVICE, PATH, 'org.freedesktop.host.portal.Registry', 'Register',
+                      GLib.Variant('(sa{sv})', ('uuway', {})), None,
+                      Gio.DBusCallFlags.NONE, 10000, None)
+        REGISTERED_CONNECTIONS.add(name)
+    return True
 
 
 def load_restore_token(path):
@@ -270,6 +289,7 @@ def main():
     if not binary.is_file():
         raise RuntimeError('Run scripts/build-pipewire-probe.sh first')
     bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    register_portal_app(bus)
     sender = bus.get_unique_name()[1:].replace('.', '_')
     session = None
     remote_fd = None

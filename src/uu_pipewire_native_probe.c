@@ -41,6 +41,7 @@ struct probe {
     unsigned delivery_gaps[4];
     struct uurb_capture_timing source_timing;
     unsigned missing_source_header;
+    unsigned stale_source_frames;
     unsigned process_callbacks, maximum_batch, superseded;
     struct uurb_cursor_snapshot *cursor;
     unsigned cursor_updates;
@@ -122,7 +123,10 @@ static void format_changed(void *opaque, uint32_t id, const struct spa_pod *form
             SPA_PARAM_META_size, SPA_POD_Int(sizeof(struct spa_meta_header))),
         spa_pod_builder_add_object(&builder, SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta,
             SPA_PARAM_META_type, SPA_POD_Id(SPA_META_Cursor),
-            SPA_PARAM_META_size, SPA_POD_Int(sizeof(struct spa_meta_cursor) + sizeof(struct spa_meta_bitmap) + UURB_CURSOR_PIXEL_BYTES))};
+            SPA_PARAM_META_size, SPA_POD_CHOICE_RANGE_Int(
+                sizeof(struct spa_meta_cursor) + sizeof(struct spa_meta_bitmap) + UURB_CURSOR_PIXEL_BYTES,
+                sizeof(struct spa_meta_cursor) + sizeof(struct spa_meta_bitmap),
+                sizeof(struct spa_meta_cursor) + sizeof(struct spa_meta_bitmap) + UURB_CURSOR_PIXEL_BYTES))};
     if (pw_stream_update_params(p->stream, params, p->cursor ? 3 : 2) < 0) {
         fail(p, "DMA-BUF buffer negotiation failed");
         return;
@@ -151,8 +155,8 @@ static void record_delivery(struct probe *p, const struct spa_meta_header *heade
 static void process_frame(struct probe *p, struct pw_buffer *frame)
 {
     struct spa_buffer *buffer = frame->buffer;
-    /* Cursor-only buffers carry zero video bytes. Process their metadata before
-     * deciding whether a GPU frame needs encoding. Never map desktop pixels. */
+    /* Cursor-only buffers contain no usable video, even when KWin retains the
+     * allocation size. Process their metadata first. Never map desktop pixels. */
     if (p->cursor && buffer) {
         struct spa_meta *meta = spa_buffer_find_meta(buffer, SPA_META_Cursor);
         int update = meta ? uurb_cursor_metadata(p->cursor, meta->data, meta->size, p->cursor_mutter) : 0;
@@ -170,10 +174,19 @@ static void process_frame(struct probe *p, struct pw_buffer *frame)
                 const struct spa_meta_header *header = spa_buffer_find_meta_data(buffer, SPA_META_Header, sizeof(*header));
                 struct timespec now;
                 if (!header || header->pts < 0 || (header->flags & SPA_META_HEADER_FLAG_DISCONT) ||
-                    clock_gettime(CLOCK_MONOTONIC, &now) < 0 ||
-                    uurb_capture_encoder_cursor_frame(p->encoder, (uint64_t)header->pts)) {
+                    clock_gettime(CLOCK_MONOTONIC, &now) < 0) {
                     pw_stream_queue_buffer(p->stream, frame);
                     fail(p, "Cursor-only GPU delivery requires valid source PTS and retained background");
+                    return;
+                }
+                if (!uurb_capture_timing_fresh(&p->source_timing, header->pts)) {
+                    p->stale_source_frames++;
+                    pw_stream_queue_buffer(p->stream, frame);
+                    return;
+                }
+                if (uurb_capture_encoder_cursor_frame(p->encoder, (uint64_t)header->pts)) {
+                    pw_stream_queue_buffer(p->stream, frame);
+                    fail(p, "Cursor-only GPU delivery failed");
                     return;
                 }
                 record_delivery(p, header, (uint64_t)now.tv_sec * 1000000000ull + now.tv_nsec);
@@ -212,6 +225,14 @@ static void process_frame(struct probe *p, struct pw_buffer *frame)
     if (valid && !empty && clock_gettime(CLOCK_MONOTONIC, &now) < 0) valid = 0;
     uint64_t delivered_ns = (uint64_t)now.tv_sec * 1000000000ull + now.tv_nsec;
     if (valid && !empty && p->encoder) {
+        /* KWin can repeat an older source PTS. Recycle that buffer without
+         * submitting it to NVENC or inventing a replacement timestamp. */
+        if (header && header->pts >= 0 && !(header->flags & SPA_META_HEADER_FLAG_DISCONT) &&
+            !uurb_capture_timing_fresh(&p->source_timing, header->pts)) {
+            p->stale_source_frames++;
+            pw_stream_queue_buffer(p->stream, frame);
+            return;
+        }
         if (!header || header->pts < 0 || (p->frames && (header->flags & SPA_META_HEADER_FLAG_DISCONT))) {
             fprintf(stderr, "Encoding requires continuous PipeWire source PTS; refusing a substituted clock\n");
             valid = 0;
@@ -238,7 +259,7 @@ static void process_frame(struct probe *p, struct pw_buffer *frame)
 
 #define MAX_QUEUED 16
 
-/* Holds a new desktop image. Zero-size chunks are cursor-only updates or empty notifications. */
+/* Holds a usable desktop image; exclude empty and cursor-only video chunks. */
 static int carries_video(struct pw_buffer *frame)
 {
     struct spa_buffer *buffer = frame->buffer;
@@ -571,14 +592,14 @@ int main(int argc, char **argv)
                "\"delivery_span_seconds\":%.6f,\"delivery_fps\":%.3f,\"delivery_gap_us_max\":%.3f,"
                "\"delivery_gap_bins_ms\":{\"lt12\":%u,\"12to24\":%u,\"24to40\":%u,\"ge40\":%u},"
                "\"negotiated_framerate\":[%u,%u],\"negotiated_max_framerate\":[%u,%u],\"requested_max_fps\":%lu,"
-               "\"source_pts_samples\":%u,\"source_pts_invalid\":%u,\"source_header_missing\":%u,\"source_pts_fps\":%.3f,"
+               "\"source_pts_samples\":%u,\"source_pts_invalid\":%u,\"source_header_missing\":%u,\"source_pts_stale_frames\":%u,\"source_pts_fps\":%.3f,"
                "\"source_gap_bins_ms\":{\"lt12\":%u,\"12to24\":%u,\"24to40\":%u,\"ge40\":%u},"
                "\"process_callbacks\":%u,\"maximum_batch\":%u,\"superseded_frames\":%u,\"encode_timestamp_source\":\"%s\"}\n",
                 stats.imports, stats.average_us, stats.maximum_us, span, span > 0 ? (p.frames - 1) / span : 0,
                 (double)p.maximum_gap_ns / 1000, p.delivery_gaps[0], p.delivery_gaps[1], p.delivery_gaps[2], p.delivery_gaps[3],
                 p.video.framerate.num, p.video.framerate.denom, p.video.max_framerate.num, p.video.max_framerate.denom,
                 requested_max_fps,
-                p.source_timing.samples, p.source_timing.invalid, p.missing_source_header,
+                p.source_timing.samples, p.source_timing.invalid, p.missing_source_header, p.stale_source_frames,
                 uurb_capture_timing_fps(&p.source_timing),
                 p.source_timing.gaps[0], p.source_timing.gaps[1], p.source_timing.gaps[2], p.source_timing.gaps[3],
                 p.process_callbacks, p.maximum_batch, p.superseded, (encode || relay) ? "pipewire-pts" : "none");

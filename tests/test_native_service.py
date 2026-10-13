@@ -17,6 +17,25 @@ spec.loader.exec_module(service)
 
 
 class ServiceLifecycleTests(unittest.TestCase):
+    def test_plasma_refuses_unsafe_display_flags_before_touching_state(self):
+        with patch.object(service, 'plasma_wayland', return_value=True), \
+                patch.object(service.trial, 'private_directory') as private:
+            for preserve, allow in ((True, False), (False, True), (True, True)):
+                with self.assertRaisesRegex(ValueError, 'KDE display'):
+                    service.run(Path('/nonexistent/runtime.json'), preserve, allow)
+            private.assert_not_called()
+
+    def test_plasma_never_passes_a_stale_display_socket_to_wine(self):
+        def worker(*args, **kwargs):
+            self.assertIsNone(args[9])
+            signal.raise_signal(signal.SIGTERM)
+
+        with self.fixture(worker) as (path, launch, event, notify), \
+                patch.object(service, 'plasma_wayland', return_value=True), \
+                patch.object(service.trial.bundle_tools, 'verify', return_value={'native_display_included': True}):
+            service.run(path)
+            launch.assert_called_once()
+
     @contextlib.contextmanager
     def fixture(self, worker):
         with tempfile.TemporaryDirectory() as temporary:

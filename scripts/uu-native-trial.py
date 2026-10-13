@@ -20,14 +20,17 @@ import shutil
 import signal
 import stat
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
-WINE = '/opt/wine-stable/bin/wine'
-WINESERVER = '/opt/wine-stable/bin/wineserver'
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from desktop_backend import plasma_wayland, current_plasma_topology, wine_bin_directory
+WINE = str(wine_bin_directory() / 'wine')
+WINESERVER = str(wine_bin_directory() / 'wineserver')
 spec = importlib.util.spec_from_file_location('native_bundle', ROOT / 'scripts/package-uu-native-runtime.py')
 bundle_tools = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bundle_tools)
@@ -336,6 +339,8 @@ def recover_interrupted(prefix, state_parent):
 
 
 def native_topology():
+    if plasma_wayland():
+        return current_plasma_topology()
     # Use the distribution Python owning dbus, independent of the caller's
     # virtualenv. Output only display geometry, never monitor serial numbers.
     code = '''import dbus,json

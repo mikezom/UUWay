@@ -31,12 +31,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import uuway_update  # noqa: E402
 import uuway_update_apply as update_checks  # noqa: E402
+from desktop_backend import plasma_wayland, wine_bin_directory  # noqa: E402
 
 PYTHON = '/usr/bin/python3'
-WINE_DIR = Path('/opt/wine-stable/bin')
+WINE_DIR = wine_bin_directory()
 WINE_SERIES = 'wine-11.0'
 WINE_PIN = Path('/etc/apt/preferences.d/uuway-wine')
+CUDA_HEADER = Path('/usr/local/cuda/include/cuda.h')
 SERVICES = ('uu-native-display', 'uu-native-text', 'uu-native-bridge')
+
+
+def desktop_services():
+    return tuple(name for name in SERVICES if name != 'uu-native-display' or not plasma_wayland())
+
+
 GDM_CONFIGS = (Path('/etc/gdm3/custom.conf'), Path('/etc/gdm/custom.conf'))  # Debian/Ubuntu, Fedora/Arch
 AUTOLOGIN_KEYS = ('AutomaticLoginEnable', 'AutomaticLogin')
 TIMED_KEYS = ('TimedLoginEnable', 'TimedLogin', 'TimedLoginDelay')
@@ -248,6 +256,16 @@ def wine_version(ctx):
     return result.stdout.strip() if result.returncode == 0 else None
 
 
+def cuda_header_version(path=CUDA_HEADER):
+    try:
+        with path.open(errors='replace') as stream:
+            header = stream.read(32768)
+    except OSError:
+        return None
+    match = re.search(r'^#\s*define\s+CUDA_VERSION\s+(\d+)\b', header, re.M)
+    return int(match.group(1)) if match else None
+
+
 def refuse_root():
     if os.geteuid() == 0 or os.environ.get('SUDO_USER'):
         raise SetupError('请以普通用户运行，不要使用 sudo 或 root；需要权限的步骤会自己请求。')
@@ -266,9 +284,9 @@ def check_environment(ctx):
         warn(f'UUWay 只在 Ubuntu 24.04 上验证过（当前：{release.get("PRETTY_NAME", "未知")}），继续但不保证可用。')
     session = os.environ.get('XDG_SESSION_TYPE', '')
     desktop = os.environ.get('XDG_CURRENT_DESKTOP', '')
-    if session != 'wayland' or 'GNOME' not in desktop:
-        raise SetupError(f'请在 GNOME Wayland 会话里运行（当前会话：{session or "未知"} / {desktop or "未知"}）。')
-    ok('GNOME Wayland 会话')
+    if session != 'wayland' or not ('GNOME' in desktop or plasma_wayland()):
+        raise SetupError(f'请在 GNOME 或 KDE Plasma Wayland 会话里运行（当前：{session or "未知"} / {desktop or "未知"}）。')
+    ok('KDE Plasma Wayland（显示模式只读）' if plasma_wayland() else 'GNOME Wayland 会话')
     gpus = ctx.probe(['nvidia-smi', '-L'])
     if gpus.returncode != 0:
         raise SetupError('没有找到可用的 NVIDIA 显卡驱动。UUWay 需要支持 NVENC 的 NVIDIA 显卡和官方驱动。')
@@ -279,7 +297,7 @@ def check_environment(ctx):
 
 def wine_done(ctx):
     version = wine_version(ctx)
-    return bool(version) and version.startswith(WINE_SERIES) and WINE_PIN.is_file()
+    return bool(version) and version.startswith(WINE_SERIES) and (plasma_wayland() or WINE_PIN.is_file())
 
 
 def wine_pin_command(ctx):
@@ -289,6 +307,13 @@ def wine_pin_command(ctx):
 
 def wine_run(ctx):
     version = wine_version(ctx)
+    if plasma_wayland():
+        if version and version.startswith(WINE_SERIES):
+            ok('已找到 WineHQ 11.0；Manjaro 不会写入 apt pin，请自行固定该版本。')
+            return
+        raise SetupError('Manjaro 的 Wine 安装与构建目前不能由 apt 向导完成。'
+                         f'需要先准备 WineHQ 11.0（{WINE_DIR / "wine"}）和构建好的运行时；详见 docs/manjaro-kde.md。'
+                         f' 当前 Wine：{version or "未找到"}')
     if version and version.startswith(WINE_SERIES):
         info('WineHQ 已是 11.0。还差把它固定在 11.0 系列，免得 apt upgrade 悄悄升到不兼容的版本。')
         if ctx.confirm(f'现在用 sudo 写入 {WINE_PIN}？'):
@@ -566,7 +591,7 @@ def package_bundle(ctx):
 
 
 def runtime_units_current(ctx):
-    for name in SERVICES:
+    for name in desktop_services():
         try:
             text = (ctx.unit_dir / (name + '.service')).read_text()
         except OSError:
@@ -651,8 +676,14 @@ def runtime_run(ctx):
                '--state-parent', ctx.state_dir, '--text-socket', ctx.state_dir / 'text.sock']
     if not ctx.runtime_config.exists():
         # A re-run must keep what the console saved, so these only go in on a fresh install.
-        command += ['--cursor-mode', 'metadata', '--preserve-display-session']
+        command += ['--cursor-mode', 'metadata']
+        if not plasma_wayland():
+            command += ['--preserve-display-session']
+    if plasma_wayland():
+        command += ['--kde-readonly', '--no-preserve-display-session']
     ctx.run(command)
+    if plasma_wayland() and (ctx.unit_dir / 'uu-native-display.service').is_file():
+        ctx.run(['systemctl', '--user', 'disable', '--now', 'uu-native-display.service'])
     # Wine's Linux path view is applied while the bridge is stopped, and the short-lived
     # wineserver the registry update starts is reaped before the bridge's Wine starts.
     ctx.run([PYTHON, ROOT / 'scripts/configure-uu-wine-mappings.py', '--prefix', ctx.prefix,
@@ -676,11 +707,13 @@ def runtime_run(ctx):
 # --------------------------------------------------------------------- step: start
 
 def start_done(ctx):
-    return not ctx.restart_bridge and all(unit_active(ctx, name) for name in SERVICES)
+    return not ctx.restart_bridge and all(unit_active(ctx, name) for name in desktop_services())
 
 
 def restart_services_confirmed(ctx):
     """Restarting the text service can take a long-running GNOME Shell down with it; say so before doing it."""
+    if plasma_wayland():
+        return ctx.confirm('重启文字服务会中断输入法和剪贴板会话，继续吗？')
     timed = timed_state(ctx)
     safe = bool(timed and timed[0])
     warn('重启文字服务时，它会向 GNOME 无障碍总线重新注册监听；桌面运行很久之后，这可能让 GNOME Shell 崩溃（1.1.0 实测发生过一次），'
@@ -691,13 +724,13 @@ def restart_services_confirmed(ctx):
 
 
 def start_run(ctx):
-    ctx.run(['systemctl', '--user', 'enable', '--now', *(name + '.service' for name in SERVICES)])
+    ctx.run(['systemctl', '--user', 'enable', '--now', *(name + '.service' for name in desktop_services())])
     if ctx.restart_bridge:
         if getattr(ctx.args, 'restart_services', False) and restart_services_confirmed(ctx):
-            ctx.run(['systemctl', '--user', 'restart', 'uu-native-display.service', 'uu-native-text.service'])
+            ctx.run(['systemctl', '--user', 'restart', *(name + '.service' for name in desktop_services() if name != 'uu-native-bridge')])
         elif not ctx.dry_run:
-            info('文字与显示服务保持运行，不会被隐式重启（会丢失剪贴板所有权）；'
-                 '空闲时可用 uuway refresh --restart-services 一并重启。')
+            info(('文字服务' if plasma_wayland() else '文字与显示服务') +
+                 '保持运行，不会被隐式重启（会丢失剪贴板所有权）；空闲时可用 uuway refresh --restart-services 重启。')
         ctx.run(['systemctl', '--user', 'restart', 'uu-native-bridge.service'])
     if not ctx.dry_run:
         time.sleep(5)
@@ -731,7 +764,22 @@ def consent_run(ctx):
 
 # --------------------------------------------------------------------- step: launchers
 
+def tray_template():
+    # Packaged installs use /usr/bin; source installs use the console installer
+    # to point their login entry at an immutable per-user release instead.
+    path = ROOT / 'assets/uuway-tray.desktop'
+    return DESKTOP_MARKER + '\n' + path.read_text() if path.is_file() else None
+
+
 def launchers_done(ctx):
+    tray = tray_template()
+    if tray is not None:
+        entry = ctx.home / '.config/autostart/uuway-tray.desktop'
+        try:
+            if entry.is_symlink() or entry.read_text() != tray:
+                return False
+        except OSError:
+            return False
     desktop = ctx.home / '.local/share/applications/uuway.desktop'
     try:
         return not desktop.read_text().startswith(DESKTOP_MARKER)
@@ -740,6 +788,13 @@ def launchers_done(ctx):
 
 
 def launchers_run(ctx):
+    tray = tray_template()
+    if tray is not None:
+        entry = ctx.home / '.config/autostart/uuway-tray.desktop'
+        if entry.is_symlink() or (entry.exists() and not entry.read_text().startswith(DESKTOP_MARKER)):
+            raise SetupError('登录托盘入口不属于 UUWay，已保留：' + str(entry))
+        if not ctx.dry_run:
+            write_atomic(entry, tray.encode(), 0o644)
     desktop = ctx.home / '.local/share/applications/uuway.desktop'
     with contextlib.suppress(OSError):
         if desktop.read_text().startswith(DESKTOP_MARKER):
@@ -1043,8 +1098,11 @@ def command_setup(args):
     check_environment(ctx)
     with setup_lock(ctx):
         run_steps(ctx, only, parse_steps(args.force))
-    print('\n' + _paint('1;32', '🎉 完成！') + ' 打开手机上的 UU 远程，设备列表里会出现这台电脑。'
-          '\n   设置请打开应用菜单里的「UUWay 控制台」；排错用：uuway doctor')
+    if ctx.dry_run:
+        print('\n演练完成；没有安装软件或更改系统。')
+    else:
+        print('\n' + _paint('1;32', '🎉 完成！') + ' 打开手机上的 UU 远程，设备列表里会出现这台电脑。'
+              '\n   设置请打开应用菜单里的「UUWay 控制台」；排错用：uuway doctor')
     return 0
 
 
@@ -1072,8 +1130,16 @@ def command_doctor(args):
 
     session = os.environ.get('XDG_SESSION_TYPE', '')
     desktop = os.environ.get('XDG_CURRENT_DESKTOP', '')
-    check('ok' if session == 'wayland' and 'GNOME' in desktop else 'fail', 'GNOME Wayland 会话',
+    check('ok' if session == 'wayland' and ('GNOME' in desktop or plasma_wayland()) else 'fail', 'Wayland 桌面会话',
           f'{session or "?"} / {desktop or "?"}')
+    if plasma_wayland():
+        topology = ctx.probe(['kscreen-doctor', '-j'])
+        try:
+            from desktop_backend import plasma_topology
+            plasma_topology(json.loads(topology.stdout))
+            check('ok', 'KDE 单显示器拓扑（远程修改显示模式不可用）')
+        except (ValueError, TypeError, RuntimeError):
+            check('fail', 'KDE 单显示器拓扑', 'kscreen-doctor -j 不可用或当前显示器布局不受支持')
     gpus = ctx.probe(['nvidia-smi', '-L'])
     check('ok' if gpus.returncode == 0 else 'fail', 'NVIDIA 驱动',
           gpus.stdout.splitlines()[0] if gpus.returncode == 0 else '没有找到可用的 NVIDIA 驱动')
@@ -1090,9 +1156,34 @@ def command_doctor(args):
             check('fail', 'NVIDIA 内核模块与用户态库版本不一致',
                   f'{mismatch["kernel_module"]} ≠ {mismatch["userspace"]}，请重启')
     version = wine_version(ctx)
+    if plasma_wayland() and not version:
+        system_wine = ctx.probe(['/usr/bin/wine', '--version'])
+        detail = (f'/usr/bin/wine 为 {system_wine.stdout.strip()}，'
+                  if system_wine.returncode == 0 and system_wine.stdout.strip() else '')
+        detail += f'需要 {WINE_DIR / "wine"} 11.0；不能直接替换为系统 Wine'
+    else:
+        detail = version or f'没有找到 {WINE_DIR / "wine"}（运行 uuway setup）'
     check('ok' if version and version.startswith(WINE_SERIES) else 'fail', 'WineHQ stable 11.0',
-          version or '没有找到 /opt/wine-stable/bin/wine（运行 uuway setup）')
-    if version and version.startswith(WINE_SERIES):
+          detail)
+    if plasma_wayland():
+        header = CUDA_HEADER
+        system_header = Path('/opt/cuda/include/cuda.h')
+        cuda = ctx.probe(['/opt/cuda/bin/nvcc', '--version'])
+        installed = re.search(r'release ([\d.]+)', cuda.stdout) if cuda.returncode == 0 else None
+        header_version = cuda_header_version(header)
+        if header_version == 12010:
+            detail = str(header)
+        elif header_version is not None:
+            detail = f'{header} 是 CUDA {header_version // 1000}.{header_version % 1000 // 10}；需要 CUDA 12.1'
+        else:
+            detail = ((f'{system_header} (CUDA {installed.group(1) if installed else "版本未知"}) 已安装；'
+                       if system_header.is_file() else '') + f'构建需要 CUDA 12.1 头文件：{header}')
+        prebuilt = (ROOT / 'build/native-presenter/uu-pipewire-native-probe').is_file()
+        if prebuilt and header_version != 12010:
+            detail += '；已安装预构建运行时，仅重新编译需要这些头文件'
+        check('ok' if header_version == 12010 else 'warn' if prebuilt else 'fail',
+              'CUDA 12.1 构建头文件', detail)
+    if version and version.startswith(WINE_SERIES) and not plasma_wayland():
         check('ok' if WINE_PIN.is_file() else 'warn', 'WineHQ 已固定在 11.0 系列',
               str(WINE_PIN) if WINE_PIN.is_file() else '升级 WineHQ 可能让 UUWay 无法采集画面；运行 uuway setup --only wine')
     check('ok' if uinput_usable() else 'fail', '/dev/uinput 可写', '' if uinput_usable()
@@ -1115,7 +1206,7 @@ def command_doctor(args):
         bundle = Path(config.get('bundle', ''))
         check('ok' if bundle.is_dir() else 'fail', '运行时目录存在', str(bundle))
         check('ok' if runtime_units_current(ctx) else 'warn', '服务单元由 UUWay 管理且指向当前安装')
-    for name in SERVICES:
+    for name in desktop_services():
         check('ok' if unit_active(ctx, name) else 'fail', f'{name} 运行中')
         for dropin in sorted((ctx.unit_dir / (name + '.service.d')).glob('*.conf')):
             check('warn', f'{name} 有 drop-in 覆盖', str(dropin))
@@ -1464,6 +1555,8 @@ def update_rollback(ctx, args):
 
 
 def command_update(args):
+    if plasma_wayland() and args.action in ('install', 'rollback'):
+        raise SetupError('自动更新与回滚使用 apt/dpkg，仅支持 Ubuntu；Manjaro 请手动更新源码和运行时。')
     ctx = Context(args)
     refuse_root()
     handler = dict(check=update_check, install=update_install, status=update_status, rollback=update_rollback)
@@ -1503,6 +1596,7 @@ def command_uninstall(args):
     ctx.run(['systemctl', '--user', 'disable', '--now', *(name + '.service' for name in SERVICES)], check=False)
     removable = [ctx.unit_dir / (name + '.service') for name in SERVICES]
     removable += [(ctx.home / '.local/share/applications/uuway.desktop', DESKTOP_MARKER),
+                  (ctx.home / '.config/autostart/uuway-tray.desktop', DESKTOP_MARKER),
                   (fcitx_conf_path(ctx), FCITX_MARKER)]
     for entry in removable:
         path, marker = entry if isinstance(entry, tuple) else (entry, SERVICE_MARKER)

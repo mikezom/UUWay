@@ -38,6 +38,10 @@ SERVICE_NAMES = {
     "uu-native-text.service": "文字兼容服务",
     "uu-native-display.service": "显示保护服务",
 }
+PLASMA_READONLY = (os.environ.get('XDG_SESSION_TYPE') == 'wayland' and
+                   'KDE' in os.environ.get('XDG_CURRENT_DESKTOP', '').split(':'))
+if PLASMA_READONLY:
+    SERVICE_NAMES.pop('uu-native-display.service')
 
 
 def _private_dir(path):
@@ -335,6 +339,8 @@ def _publish_file_uris(uris):
 
 
 def _display_request(runtime, request):
+    if PLASMA_READONLY:
+        raise ValueError("KDE 会话不支持远程修改显示模式")
     if not runtime:
         raise ValueError("运行配置不可用")
     path = Path(runtime["state_parent"]) / "display.sock"
@@ -416,12 +422,106 @@ def collect_status():
     return "\n".join(lines)
 
 
+class Tray:
+    """Use the desktop's StatusNotifier/AppIndicator implementation."""
+
+    def __init__(self, console, application, Indicator):
+        self.console, self.application, self.Indicator = console, application, Indicator
+        self.closed = self.refreshing = self.busy = False
+        self.state = None
+        self.indicator = Indicator.Indicator.new("uuway", str(BRAND_ICON), Indicator.IndicatorCategory.APPLICATION_STATUS)
+        self.indicator.set_title("UUWay")
+        self.indicator.set_attention_icon_full(str(BRAND_ICON), "UUWay")
+        self.menu = console.Gtk.Menu()
+        self.items = {}
+        for name, label, callback in (
+                ("status", "UUWay · 正在读取状态", None),
+                ("open", "打开控制台", self.present),
+                ("start", "启动远控", lambda *_: self.action("start")),
+                ("restart", "重启远控", lambda *_: self.action("restart")),
+                ("stop", "停止远控", lambda *_: self.action("stop")),
+                ("exit", "停止远控并退出", lambda *_: self.action("stop", True)),
+                ("tray_exit", "退出托盘（保持远控）", self.quit)):
+            if name in ("open", "exit"):
+                self.menu.append(console.Gtk.SeparatorMenuItem())
+            item = console.Gtk.MenuItem(label=label)
+            item.set_sensitive(callback is not None)
+            if callback:
+                item.connect("activate", callback)
+            self.items[name] = item
+            self.menu.append(item)
+        self.menu.show_all()
+        self.indicator.set_menu(self.menu)
+        self.indicator.set_secondary_activate_target(self.items["open"])
+        self.indicator.set_status(Indicator.IndicatorStatus.ACTIVE)
+        application.hold()
+        self.timer = console.GLib.timeout_add_seconds(5, self.refresh)
+        self.refresh()
+
+    def present(self, *_):
+        if self.console.window is None:
+            self.console.build(self.application)
+        self.console.window.show()
+        self.console.window.present()
+
+    def update(self, state=None, busy=None):
+        if self.closed:
+            return
+        if state is not None:
+            self.state = state
+        if busy is not None:
+            self.busy = busy
+        label = {"active": "远控运行中", "inactive": "远控已停止", "failed": "远控异常",
+                 "activating": "正在启动远控", "deactivating": "正在停止远控"}.get(self.state, "状态不可用")
+        self.items["status"].set_label("UUWay · " + label)
+        self.indicator.set_title("UUWay · " + label)
+        changing = self.busy or self.state in ("activating", "deactivating")
+        self.items["start"].set_sensitive(not changing and self.state in ("inactive", "failed"))
+        self.items["restart"].set_sensitive(not changing and self.state in ("active", "inactive", "failed"))
+        self.items["stop"].set_sensitive(not changing and self.state in ("active", "failed"))
+        self.items["exit"].set_sensitive(not changing)
+        self.items["tray_exit"].set_sensitive(not changing)
+        self.indicator.set_status(self.Indicator.IndicatorStatus.ATTENTION if self.state == "failed"
+                                  else self.Indicator.IndicatorStatus.ACTIVE)
+
+    def refresh(self):
+        if self.closed:
+            return False
+        if not self.refreshing:
+            self.refreshing = True
+            def done(value, error):
+                self.refreshing = False
+                self.update((value or {}).get("uu-native-bridge.service", {}).get("ActiveState", "unknown"))
+            self.console._async(_service_properties, done)
+        return True
+
+    def action(self, operation, quit_after=False):
+        self.present()
+        self.console.service_action(None, operation, quit_after=quit_after)
+
+    def quit(self, *_):
+        if self.console.input_original is not None and self.console._input_values() != self.console.input_original:
+            self.present()
+            if not self.console._confirm("放弃未保存的输入设置？", "鼠标与滚轮的改动尚未保存。", "放弃并退出"):
+                return
+        self.application.quit()
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        self.console.GLib.source_remove(self.timer)
+        self.indicator.set_status(self.Indicator.IndicatorStatus.PASSIVE)
+        self.application.release()
+
+
 class Console:
     """Native GTK shell; blocking host operations stay off the UI thread."""
 
     def __init__(self, Gtk, GLib, Gio):
         self.Gtk, self.GLib, self.Gio = Gtk, GLib, Gio
         self.window = None
+        self.tray = None
         self.closed = False
         self.refreshing = self.service_busy = self.display_busy = False
         self.refresh_pending = self.force_display_pending = False
@@ -633,7 +733,7 @@ class Console:
         dialog.destroy()
         return result
 
-    def service_action(self, button, operation):
+    def service_action(self, button, operation, quit_after=False):
         if self.service_busy or operation not in ("start", "restart", "stop"):
             return
         if operation in ("stop", "restart"):
@@ -643,6 +743,8 @@ class Console:
                                  detail, "停止服务" if operation == "stop" else "重启服务"):
                 return
         self.service_busy = True
+        if self.tray:
+            self.tray.update(busy=True)
         for item in (self.connect_button, self.stop_button, self.restart_button):
             item.set_sensitive(False)
         self.message("正在处理服务，请稍候…", "warning")
@@ -654,6 +756,9 @@ class Console:
                 raise ValueError("请到诊断页查看服务状态")
         def done(value, error):
             self.service_busy = False
+            if self.tray:
+                self.tray.update(busy=False)
+                self.tray.refresh()
             if error:
                 self.message(f"服务操作未完成：{error}", "error")
             else:
@@ -661,6 +766,9 @@ class Console:
                     self.restart_reasons.clear()
                     self.restart_revealer.set_reveal_child(False)
                 self.message("服务已停止。" if operation == "stop" else "服务已启动，正在更新状态。")
+                if quit_after and self.tray:
+                    self.tray.quit()
+                    return
             self.refresh()
         self._async(work, done)
 
@@ -850,9 +958,10 @@ class Console:
     def _show_display(self, value, force=False):
         if value is None:
             self.display_state = None
-            self.display_current.set_text("暂时无法读取显示器")
-            self.display_summary.set_text("未就绪")
-            self.display_detail.set_text("启动远程服务后重试；多显示器或未登录桌面也可能导致模式不可用。")
+            self.display_current.set_text("请在 KDE 系统设置中调整显示器" if PLASMA_READONLY else "暂时无法读取显示器")
+            self.display_summary.set_text("只读" if PLASMA_READONLY else "未就绪")
+            self.display_detail.set_text("KDE 会话不支持远程修改显示模式。" if PLASMA_READONLY else
+                                         "启动远程服务后重试；多显示器或未登录桌面也可能导致模式不可用。")
             self.display_modes.set_sensitive(False)
             self.display_scales.set_sensitive(False)
             self.display_apply_button.set_sensitive(False)
@@ -980,6 +1089,9 @@ class Console:
         return not self.closed
 
     def _close_requested(self, *_):
+        if self.tray and not self.tray.closed:
+            self.window.hide()
+            return True
         if self.input_original is not None and self._input_values() != self.input_original:
             return not self._confirm("放弃未保存的输入设置？", "鼠标与滚轮的改动尚未保存。其他已保存设置不受影响。", "放弃并关闭")
         return False
@@ -1423,12 +1535,12 @@ class Console:
 def main(argv=None):
     args = list(sys.argv[1:] if argv is None else argv[1:])
     if args == ["--help"]:
-        print("uuway-console [--status|--smoke-test] — UUWay Linux 控制台")
+        print("uuway-console [--tray|--status|--smoke-test] — UUWay Linux 控制台")
         return 0
     if args == ["--status"]:
         print(collect_status())
         return 0
-    if args not in ([], ["--smoke-test"]):
+    if args not in ([], ["--tray"], ["--smoke-test"]):
         print("不支持的参数；使用 --help 查看帮助", file=sys.stderr)
         return 2
     smoke = args == ["--smoke-test"]
@@ -1438,18 +1550,46 @@ def main(argv=None):
         from gi.repository import Gio, GLib, Gtk
     except (ImportError, ValueError) as error:
         raise SystemExit(f"UUWay 控制台需要 python3-gi/GTK 3：{error}")
-    flags = Gio.ApplicationFlags.NON_UNIQUE if smoke else Gio.ApplicationFlags.FLAGS_NONE
+    flags = Gio.ApplicationFlags.NON_UNIQUE if smoke else Gio.ApplicationFlags.HANDLES_COMMAND_LINE
     application = Gtk.Application(application_id="io.uuway.Console", flags=flags)
     console = Console(Gtk, GLib, Gio)
+    def startup(app):
+        if smoke:
+            return
+        for namespace in ("AyatanaAppIndicator3", "AppIndicator3"):
+            try:
+                gi.require_version(namespace, "0.1")
+                import importlib
+                Indicator = importlib.import_module("gi.repository." + namespace)
+            except (ImportError, ValueError):
+                continue
+            console.tray = Tray(console, app, Indicator)
+            break
+        if console.tray is None:
+            print("托盘组件不可用：需要 AppIndicator3 或 AyatanaAppIndicator3。", file=sys.stderr)
     def activate(app):
         if console.window and not console.closed:
+            console.window.show()
             console.window.present()
             return
         console.build(app)
         if smoke:
             GLib.timeout_add(500, app.quit)
+    def command_line(app, command):
+        options = list(command.get_arguments()[1:])
+        if options not in ([], ["--tray"]):
+            return 2
+        if options != ["--tray"] or console.tray is None:
+            if console.tray:
+                console.tray.present()
+            else:
+                app.activate()
+        return 0
+    application.connect("startup", startup)
     application.connect("activate", activate)
-    return application.run(argv or ["uuway-console"])
+    application.connect("command-line", command_line)
+    application.connect("shutdown", lambda *_: console.tray.close() if console.tray else None)
+    return application.run(["uuway-console"] if smoke else (argv or ["uuway-console", *args]))
 
 
 if __name__ == "__main__":

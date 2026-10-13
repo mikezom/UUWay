@@ -18,6 +18,12 @@ spec.loader.exec_module(broker)
 
 
 class BrokerCleanupTests(unittest.TestCase):
+    def test_cursor_backend_matches_the_compositor(self):
+        for plasma, expected in ((True, 'spa'), (False, 'mutter')):
+            with self.subTest(plasma=plasma), patch.object(broker, 'plasma_wayland', return_value=plasma):
+                command = broker.producer_command(Path('/private/state.json'), 7, 0, 'metadata', 8)
+                self.assertEqual(command[command.index('--cursor-backend') + 1], expected)
+
     def test_target_reset_is_generation_fenced_and_waits_for_pending_first_ack(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / 'reset.json'

@@ -65,6 +65,10 @@ UUWay 是一层**适配层**：UU 照常调用它在任何一台 Windows 电脑�
 
 **准备：**
 
+> Manjaro KDE Wayland：已在一台单屏 NVIDIA 主机上验证采集、编码和本地服务；其他硬件尚未验证，也没有 Manjaro 一键安装包。Ubuntu 的 `.deb` 和 `install.sh` 不适用。见 [Manjaro KDE 实验性适配说明](docs/manjaro-kde.md)。
+
+**在其他电脑安装这个 fork 的修改版：**请按[跨机器安装说明](docs/install-other-machines.md)从当前源码构建。上游 Releases 的旧包不包含本 fork 的 KDE 采集修复和托盘改动；不要将本机的 UU 登录信息、Wine 前缀或 Portal 授权文件复制到另一台机器。
+
 - Ubuntu 24.04，GNOME 46 **Wayland** 会话，桌面保持登录（没有显示器的主机插一个显示器诱骗器）
 - 支持 NVENC 的 **NVIDIA** 显卡和官方驱动
 - UU 远程官方 **Windows 版**安装包，以及一个 UU 账号
@@ -85,6 +89,7 @@ uuway setup --installer ~/Downloads/UURemote_Setup.exe
 
 - 向导可以反复运行：已完成的步骤会跳过。`uuway setup --dry-run` 只显示将要执行的命令，`--only 步骤` 只重做某一步。
 - 出问题先运行 `uuway doctor`，它会逐项检查环境和安装状态。
+- 本机操作可从应用菜单打开「UUWay 控制台」，或使用系统托盘中的 UUWay 菜单启动、重启和停止远控。关闭控制台窗口会保留托盘；「停止远控并退出」会断开连接并退出托盘。「退出托盘（保持远控）」只关闭托盘。托盘在桌面登录后自动启动。
 - **只用远程、不常在机器前？** 运行 `uuway autologin on`：开机或断电恢复后 GDM 自动登录你的账号；桌面崩溃或手动注销后，登录界面停留约 10 秒也会自动重新登录，UU 随桌面自动上线（关闭：`uuway autologin off`；想在登录界面停留，先关闭它）。这是安全相关的开关，向导和 `--yes` 都不会替你开启；代价是任何能接触这台机器的人开机就能进入你的桌面，建议配合磁盘加密和自动锁屏。UU 在 GDM 登录界面是离线的，因为 UUWay 的采集和输入都只在你的桌面会话里；这个功能让登录界面只停留十几秒。
 - 向导会把 WineHQ 固定在 11.0 系列（写入 `/etc/apt/preferences.d/uuway-wine`，需要你确认），避免 `apt upgrade` 悄悄升到会让画面采集失效的版本。
 - 如果你使用 Fcitx5，向导会启用手机中文输入所需的插件，需要执行一次 `fcitx5 -r` 才会生效。

@@ -14,6 +14,13 @@ spec.loader.exec_module(console)
 
 
 class ConsoleConfigTests(unittest.TestCase):
+    def test_plasma_rejects_display_requests_before_connecting_to_old_socket(self):
+        with patch.object(console, 'PLASMA_READONLY', True), \
+                patch.object(console.socket, 'socket') as connect:
+            with self.assertRaisesRegex(ValueError, 'KDE'):
+                console._display_request({'state_parent': '/tmp/unused'}, {'version': 1, 'op': 'apply'})
+            connect.assert_not_called()
+
     def test_atomic_private_json_roundtrip(self):
         with tempfile.TemporaryDirectory() as temporary:
             parent = Path(temporary) / "config"

@@ -24,6 +24,21 @@ def _safe_directory(path):
         raise ValueError(f"Unsafe console installation directory: {path}")
 
 
+def _write_entry(path, content):
+    if path.exists() or path.is_symlink():
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or not path.read_text().startswith(MARKER):
+            raise ValueError("Refusing to replace an unrelated menu entry")
+    fd, name = tempfile.mkstemp(prefix=".uuway-console-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            stream.write(content); stream.flush(); os.fsync(stream.fileno())
+        os.chmod(name, 0o644); os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
 def run():
     info = SOURCE.lstat()
     if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size < 2 * 1024 * 1024:
@@ -40,7 +55,8 @@ def run():
     digest = hashlib.sha256("\n".join(f"{name}:{value}" for name, value in sorted(hashes.items())).encode()).hexdigest()
     parent = Path.home() / ".local/lib/uuway-console"
     menu = Path.home() / ".local/share/applications"
-    _safe_directory(parent); _safe_directory(menu)
+    autostart = Path.home() / ".config/autostart"
+    _safe_directory(parent); _safe_directory(menu); _safe_directory(autostart)
     release = parent / digest
     if not release.exists():
         with tempfile.TemporaryDirectory(prefix=".uuway-stage-", dir=parent) as name:
@@ -79,16 +95,13 @@ def run():
         "Comment=UUWay Linux 原生 bridge：服务、输入、显示和文件接收\n"
         f"Exec=\"{target}\"\nIcon={icon}\n"
         "Terminal=false\nCategories=Settings;Utility;\nStartupNotify=true\n")
-    fd, name = tempfile.mkstemp(prefix=".uuway-console-", dir=menu)
-    try:
-        with os.fdopen(fd, "w") as stream:
-            stream.write(content); stream.flush(); os.fsync(stream.fileno())
-        os.chmod(name, 0o644); os.replace(name, desktop)
-    finally:
-        if os.path.exists(name):
-            os.unlink(name)
+    _write_entry(autostart / "uuway-tray.desktop", MARKER + (
+        "[Desktop Entry]\nType=Application\nName=UUWay 托盘\n"
+        f'Exec="{target}" --tray\nIcon={icon}\n'
+        "Terminal=false\nStartupNotify=false\n"))
+    _write_entry(desktop, content)
     migration = retire_legacy_launchers()
-    print("UUWay 控制台已安装；菜单入口：UUWay 控制台；未重启服务")
+    print("UUWay 控制台与登录托盘已安装；菜单入口：UUWay 控制台；未重启服务")
     if migration["changed"]:
         print("旧 UU 入口已停用并备份：" + migration["backup"])
         print("运行 systemctl --user daemon-reload 以加载旧服务保护配置")

@@ -48,7 +48,8 @@ def existing_display_policy(content):
     return '--preserve-display-session' in command[4:]
 
 
-def install(bundle, prefix, restore_state, state_parent, text_socket, cursor_mode=None, preserve_display_session=None):
+def install(bundle, prefix, restore_state, state_parent, text_socket, cursor_mode=None, preserve_display_session=None,
+            kde_readonly=False):
     verified = trial.bundle_tools.verify(bundle)
     if not verified.get('native_service_lifetime_included'):
         raise ValueError('Expected a continuous-lifetime capable native bundle')
@@ -95,6 +96,8 @@ def install(bundle, prefix, restore_state, state_parent, text_socket, cursor_mod
                 old_display_policy = existing_display_policy(content)
     if preserve_display_session is None:
         preserve_display_session = old_display_policy
+    if kde_readonly and preserve_display_session:
+        raise ValueError('KDE cannot preserve a Mutter display session')
     if type(preserve_display_session) is not bool:
         raise ValueError('Display preservation must be an explicit boolean')
     if preserve_display_session and not verified.get('native_display_geometry_included'):
@@ -104,8 +107,14 @@ def install(bundle, prefix, restore_state, state_parent, text_socket, cursor_mod
         raise ValueError('Unsupported service installation path')
     trial.state_tools.write_private(config_path, config)
     for unit in units:
+        if kde_readonly and unit.name == 'uu-native-display.service':
+            continue
         content = (ROOT / 'systemd' / (unit.name + '.in')).read_text().replace('@ROOT@', roots[unit].replace('%', '%%'))
         content = content.replace('@DISPLAY_POLICY@', ' --preserve-display-session' if preserve_display_session else '')
+        if unit.name == 'uu-native-bridge.service':
+            content = (content.replace('@DISPLAY_WANTS@', '' if kde_readonly else 'Wants=uu-native-display.service')
+                              .replace('@DISPLAY_AFTER@', '' if kde_readonly else 'After=uu-native-display.service')
+                              .replace('@DISPLAY_RECONFIGURE@', '' if kde_readonly else ' --allow-display-reconfigure'))
         fd, temporary = tempfile.mkstemp(prefix='.uurb-service-', dir=unit_dir)
         try:
             with os.fdopen(fd, 'w') as stream:
@@ -114,7 +123,8 @@ def install(bundle, prefix, restore_state, state_parent, text_socket, cursor_mod
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
-    print(json.dumps(dict(event='native_service_staged', units=[str(unit) for unit in units], release_id=verified['release_id'],
+    print(json.dumps(dict(event='native_service_staged', units=[str(unit) for unit in units
+                          if not kde_readonly or unit.name != 'uu-native-display.service'], release_id=verified['release_id'],
                           active_service_changed=False, system_permissions_changed=False)))
 
 
@@ -126,6 +136,7 @@ if __name__ == '__main__':
                         help='Keep the saved cursor mode when omitted (fresh install: metadata)')
     parser.add_argument('--preserve-display-session', action=argparse.BooleanOptionalAction, default=None,
                         help='Keep the installed main-unit policy when omitted; explicit enable requires geometry support')
+    parser.add_argument('--kde-readonly', action='store_true', help='KDE: disable unsupported display guardian and remote mode writes')
     args = parser.parse_args()
     install(args.bundle, args.prefix, args.restore_state, args.state_parent, args.text_socket, args.cursor_mode,
-            args.preserve_display_session)
+            args.preserve_display_session, args.kde_readonly)

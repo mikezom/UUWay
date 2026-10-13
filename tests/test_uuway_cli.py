@@ -44,7 +44,8 @@ class CliCase(unittest.TestCase):
             (self.checkout / "build/helpers" / name).write_bytes(NEW_PROXY if name == "uu-terminal-proxy.exe"
                                                                    else b"new-" + name.encode())
         for override in (patch.object(Path, "home", return_value=self.home),
-                         patch.object(cli, "ROOT", self.checkout)):
+                         patch.object(cli, "ROOT", self.checkout),
+                         patch.object(cli, "plasma_wayland", return_value=False)):
             override.start()
             self.addCleanup(override.stop)
         self.prefix = self.home / ".local/share/wineprefixes/uu-remote"
@@ -160,6 +161,19 @@ class HelperSyncTests(CliCase):
             self.quiet(cli.helpers_run, self.context())
 
 
+class CudaHeaderTests(CliCase):
+    def test_cuda_header_version_is_read_from_the_header_not_the_path(self):
+        header = self.root / 'cuda.h'
+        for value, expected in ((12010, 12010), (13030, 13030)):
+            with self.subTest(version=value):
+                header.write_text(f'#define CUDA_VERSION {value}\n')
+                self.assertEqual(cli.cuda_header_version(header), expected)
+        header.write_text('#define CUDA_VERSION invalid\n')
+        self.assertIsNone(cli.cuda_header_version(header))
+        header.unlink()
+        self.assertIsNone(cli.cuda_header_version(header))
+
+
 class RuntimeStepTests(CliCase):
     def run_runtime(self, config=None, bridge_active=False, text_backend=None):
         ctx = self.record_commands(self.context())
@@ -184,6 +198,19 @@ class RuntimeStepTests(CliCase):
         command = self.install_command()
         self.assertEqual(command[command.index("--cursor-mode") + 1], "metadata")
         self.assertIn("--preserve-display-session", command)
+
+    def test_plasma_install_disables_display_writes_and_guardian(self):
+        with patch.object(cli, 'plasma_wayland', return_value=True):
+            self.run_runtime()
+            command = self.install_command()
+            self.assertIn('--kde-readonly', command)
+            self.assertIn('--no-preserve-display-session', command)
+            self.assertNotIn('--preserve-display-session', command)
+            self.commands.clear()
+            ctx = self.record_commands(self.context())
+            ctx.dry_run = True
+            self.quiet(cli.start_run, ctx)
+            self.assertNotIn('uu-native-display.service', ' '.join(' '.join(c) for c in self.commands))
 
     def test_existing_install_keeps_what_the_console_saved(self):
         self.run_runtime(config={"cursor_mode": "composited"})
@@ -405,6 +432,10 @@ class EnvironmentTests(CliCase):
     def test_accepts_gnome_wayland_with_nvidia(self):
         self.check(self.wayland)
 
+    def test_accepts_plasma_wayland_with_nvidia(self):
+        with patch.object(cli, 'plasma_wayland', return_value=True):
+            self.check({'XDG_SESSION_TYPE': 'wayland', 'XDG_CURRENT_DESKTOP': 'KDE'})
+
     def test_refuses_root_and_sudo(self):
         with self.assertRaises(cli.SetupError):
             self.check(self.wayland, euid=0)
@@ -451,6 +482,22 @@ class LauncherAndUninstallTests(CliCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
         return path
+
+    def test_login_tray_is_installed_idempotently_and_foreign_entry_preserved(self):
+        ctx = self.record_commands(self.context())
+        template = self.checkout / 'assets/uuway-tray.desktop'
+        template.parent.mkdir(parents=True)
+        template.write_text('[Desktop Entry]\nExec=/usr/bin/uuway-console --tray\n')
+        entry = self.home / '.config/autostart/uuway-tray.desktop'
+        self.assertFalse(cli.launchers_done(ctx))
+        with patch('native_launcher_migration.retire_legacy_launchers', return_value={'changed': 0}):
+            self.quiet(cli.launchers_run, ctx)
+            self.assertTrue(cli.launchers_done(ctx))
+            self.quiet(cli.launchers_run, ctx)
+            entry.write_text('[Desktop Entry]\nName=Existing\n')
+            with self.assertRaises(cli.SetupError):
+                self.quiet(cli.launchers_run, ctx)
+        self.assertIn('Name=Existing', entry.read_text())
 
     def test_only_the_console_installers_old_menu_entry_is_removed(self):
         ctx = self.record_commands(self.context())
@@ -561,6 +608,19 @@ class StepSelectionTests(CliCase):
             self.assertTrue(cli.wine_done(ctx))
         with patch.object(cli, "WINE_PIN", pin), patch.object(cli, "wine_version", return_value="wine-10.0"):
             self.assertFalse(cli.wine_done(ctx))
+
+    def test_plasma_wine_step_never_runs_apt(self):
+        ctx = self.record_commands(self.context())
+        with patch.object(cli, 'plasma_wayland', return_value=True), \
+                patch.object(cli, 'wine_version', return_value=None):
+            with self.assertRaisesRegex(cli.SetupError, 'Manjaro'):
+                cli.wine_run(ctx)
+            self.assertEqual(self.commands, [])
+        with patch.object(cli, 'plasma_wayland', return_value=True), \
+                patch.object(cli, 'wine_version', return_value='wine-11.0'):
+            self.assertTrue(cli.wine_done(ctx))
+            self.quiet(cli.wine_run, ctx)
+            self.assertEqual(self.commands, [])
 
 
 class ElevationTests(CliCase):
