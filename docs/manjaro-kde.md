@@ -8,6 +8,13 @@ capture have been verified on this host. The actual UU session displayed the
 desktop; it still needs a manual retest after the cursor stability fix. This
 is not a supported release target.
 
+As of 2026-10-14, the active UUWay bridge still uses the private Wine 11.0
+runtime: the running `wineserver` is under `~/.local/opt/uuway/wine-11.0/`.
+`pacman -Q wine` reports 11.17 and `pacman -Q cuda` reports 13.3.1, but those
+are the installed system packages, **not** evidence that UUWay has been
+rebuilt and remotely tested with Wine 11.17 or CUDA 13.3 headers. See
+[the Arch-native AUR build status](aur-manjaro-kde.md) for package versions.
+
 For a new computer, begin with [the cross-machine installation checklist](install-other-machines.md).
 The dated observations below describe one test host; they are not a portable
 installer, and that host's UU account, Portal tokens and Wine prefix must not

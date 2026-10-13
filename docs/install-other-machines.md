@@ -43,7 +43,11 @@ installers. The tested KDE profile requires one active, unmirrored, unrotated
 physical display at origin (0, 0), a working KDE screen-cast Portal, NVIDIA
 NVENC, `/dev/uinput` access, and a WineHQ **11.0** runtime. The system's newer
 Wine version cannot be silently substituted. KDE's virtual display is not a
-replacement for this physical-output profile.
+replacement for this physical-output profile. See
+[native AUR build status and host package versions](aur-manjaro-kde.md) before
+trying to package this for a different Manjaro computer. The existing Ubuntu
+container procedure below documents the earlier manual trial; it is **not**
+the proposed Arch-native AUR build.
 
 Before attempting a fresh KDE installation:
 
