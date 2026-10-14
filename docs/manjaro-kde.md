@@ -44,12 +44,10 @@ missing Wine, NVENC libraries, uinput permissions, portal consent, and services.
    private capture bridge is built against the 11.0 Wine server protocol.
    A separate user installation at `~/.local/opt/uuway/wine-11.0/bin/` is also
    detected when the system WineHQ path is absent.
-3. Build the runtime following [build.md](build.md) in a controlled Ubuntu
-   24.04 environment, and verify all ELF dependencies on the target machine.
-   The build fetches hash-pinned Ubuntu Wine headers and cross-toolchain
-   packages; pacman dependencies alone do not replace this build. The target
-   also needs NVIDIA CUDA 12.1 headers at `/usr/local/cuda/include/cuda.h` for
-   a native build. Manjaro's unpinned CUDA package is not a drop-in replacement.
+3. For a native Manjaro build use the [AUR recipe](aur-manjaro-kde.md) and
+   verify ELF dependencies on the target. It uses the system CUDA 13.3 headers
+   and the pinned Wine 11.0 private runtime, not system Wine 11.17. The old
+   Ubuntu source-build instructions in [build.md](build.md) still use CUDA 12.1.
 4. Ensure `xdg-desktop-portal-kde`, PipeWire, `kscreen-doctor`, `/usr/bin/python3`
    with `dbus` and `gi`, `xvfb-run`, and a working `/dev/uinput` are present.
    Install the input rule in `config/70-uurb-native-input.rules` only after
@@ -61,7 +59,9 @@ Instead of compiling, the native files can be extracted from the project's
 official release after verifying its SHA256SUMS. Do not install the Debian
 package with a package manager on Manjaro. Check that the release's native
 sources match the checkout and that every extracted ELF dependency resolves.
-CUDA 12.1 headers are needed to compile, not to run those prebuilt files.
+Those older prebuilt files were compiled with CUDA 12.1; they do not need the
+toolkit headers to run. A new Arch-native build can use the verified CUDA 13.3
+headers without replacing the host's installed CUDA package.
 
 With a *verified compatible* built tree and WineHQ 11.0 already in place,
 `/usr/bin/python3 scripts/uuway_cli.py setup --installer /path/to/UURemote_Setup.exe`
@@ -72,12 +72,16 @@ On this checkout's host (RTX 3060 Laptop, Plasma Wayland), the topology
 parser and service profile have been tested. The installed `/usr/bin/wine`
 reports **11.17** and `/opt/cuda/bin/nvcc` reports **13.3**, with headers at
 `/opt/cuda/include/cuda.h`. These are not the pinned Wine 11.0 protocol and
-CUDA 12.1 headers needed to build the existing GPU bridge. Do not symlink
+CUDA 12.1 headers used to build the existing GPU bridge. Do not symlink
 the system Wine/CUDA into the pinned paths: the Wine private handle protocol
 and CUDA symbol versions are part of the compatibility boundary. At that
 initial check WineHQ 11.0 and CUDA 12.1 headers were absent; the subsequent
 installation below added private Wine and used pinned build headers without
 changing the system Wine/CUDA packages.
+
+On 2026-10-14 an independent Manjaro host compiled the new AUR-targeted
+sources against its system CUDA 13.3 after an explicit API compatibility fix.
+This does not mean the older running bridge on this computer was replaced.
 
 ## Local installation on 2026-10-13
 

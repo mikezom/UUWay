@@ -6,8 +6,8 @@ bash "$repo_dir/scripts/build-d3d11-capture-probe.sh"
 work="$repo_dir/build/gpu-relay"
 stage="$repo_dir/build/native-presenter"
 common=(-std=c11 -O2 -Wall -Wextra -Werror)
-/opt/wine-stable/bin/winegcc -m64 -shared "${common[@]}" \
-    -I "$work/wine-dev/usr/include/wine" -I "$work/wine-dev/usr/include/wine/wine/windows" \
+"${UURB_WINE_BIN:-/opt/wine-stable/bin}/winegcc" -m64 -shared "${common[@]}" \
+    -I "${UURB_WINE_HEADERS:-$work/wine-dev/usr/include/wine}" -I "${UURB_WINE_HEADERS:-$work/wine-dev/usr/include/wine}/windows" \
     -o "$stage/uurb-dxgi-capture.dll" "$repo_dir/src/uu_dxgi_duplication.spec" \
     "$repo_dir/src/uu_dxgi_duplication.c" "$repo_dir/src/uu_d3d11_capture_texture.c" \
     "$stage/native_cuda_frame_copy.o" "$stage/native_gpu_frame_channel.o" "$stage/native_wine11_gpu_fd.o" \
@@ -17,8 +17,8 @@ x86_64-w64-mingw32-gcc "${common[@]}" -shared \
 x86_64-w64-mingw32-gcc "${common[@]}" -I "$work/nv-codec-headers/include" \
     -o "$stage/uu-dxgi-pe-capture-probe.exe" "$repo_dir/src/uu_dxgi_capture_probe.c" \
     -ld3d11 -ldxgi -ldxguid -luuid
-/opt/wine-stable/bin/winegcc -m64 "${common[@]}" -I "$repo_dir/src" \
-    -I "$work/wine-dev/usr/include/wine" -I "$work/wine-dev/usr/include/wine/wine/windows" \
+"${UURB_WINE_BIN:-/opt/wine-stable/bin}/winegcc" -m64 "${common[@]}" -I "$repo_dir/src" \
+    -I "${UURB_WINE_HEADERS:-$work/wine-dev/usr/include/wine}" -I "${UURB_WINE_HEADERS:-$work/wine-dev/usr/include/wine}/windows" \
     -o "$stage/uu-dxgi-state-probe.exe" "$repo_dir/tests/probes/dxgi_duplication_state.c" \
     "$repo_dir/src/uu_dxgi_duplication.c" "$stage/native_gpu_frame_channel.o" -ldxguid -luuid
 printf 'Built experimental DXGI COM backend and true PE consumer. No UU files changed.\n'

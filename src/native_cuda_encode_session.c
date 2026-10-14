@@ -3,7 +3,7 @@
 #include "native_cuda_encode_session.h"
 #include "native_nvenc_reference_config.h"
 #include "native_nvenc_negotiation.h"
-#include <cuda.h>
+#include "native_cuda_compat.h"
 #include <ffnvcodec/nvEncodeAPI.h>
 #include <dlfcn.h>
 #include <pthread.h>
@@ -92,7 +92,7 @@ static struct uurb_encoder *encoder_open(int fd, uint64_t bytes,
         if (!memcmp(candidate.bytes, uuid, 16)) { selected = index; break; }
     }
     if (selected < 0) { fprintf(stderr, "No CUDA device matches the Vulkan device UUID\n"); goto done; }
-    CU(cuCtxCreate(&s->context, 0, selected));
+    CU(uurb_cu_ctx_create(&s->context, selected));
     current = 1;
     CUDA_EXTERNAL_MEMORY_HANDLE_DESC external = {0};
     external.type = CU_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD;

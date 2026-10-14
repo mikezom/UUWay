@@ -9,6 +9,9 @@ import subprocess
 
 def wine_bin_directory(system=Path('/opt/wine-stable/bin'), local=None):
     local = local if local is not None else Path.home() / '.local/opt/uuway/wine-11.0/bin'
+    packaged = Path('/opt/uuway/wine-11.0/bin')
+    if (packaged / 'wine').is_file():
+        return packaged
     return local if not (system / 'wine').is_file() and (local / 'wine').is_file() else system
 
 

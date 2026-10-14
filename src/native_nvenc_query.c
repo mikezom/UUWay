@@ -1,7 +1,7 @@
 /* Native CUDA/NVENC capability queries. No Windows pointer/function table is
  * ever passed to the Linux driver; DirectX devices are matched by GPU UUID. */
 #include "native_nvenc_query.h"
-#include <cuda.h>
+#include "native_cuda_compat.h"
 #include <dlfcn.h>
 #include <pthread.h>
 #include <stdlib.h>
@@ -62,7 +62,7 @@ int uurb_nvenc_query_open(const unsigned char uuid[16], void **output)
     if (selected < 0) return NV_ENC_ERR_NO_ENCODE_DEVICE;
     struct query_session *s = calloc(1, sizeof(*s));
     if (!s) return NV_ENC_ERR_OUT_OF_MEMORY;
-    if (cuCtxCreate(&s->context, 0, selected) != CUDA_SUCCESS) { free(s); return NV_ENC_ERR_INVALID_DEVICE; }
+    if (uurb_cu_ctx_create(&s->context, selected) != CUDA_SUCCESS) { free(s); return NV_ENC_ERR_INVALID_DEVICE; }
     s->api.version = NV_ENCODE_API_FUNCTION_LIST_VER;
     status = native_instance(&s->api);
     if (status == NV_ENC_SUCCESS) {

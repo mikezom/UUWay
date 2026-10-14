@@ -1,6 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "native_cuda_frame_copy.h"
-#include <cuda.h>
+#include "native_cuda_compat.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -63,7 +63,7 @@ struct uurb_gpu_copy *uurb_gpu_copy_open(int source_fd, uint64_t source_bytes,
         if (!memcmp(candidate.bytes, uuid, 16)) { selected = device; break; }
     }
     if (selected < 0) goto done;
-    CU(cuCtxCreate(&s->context, 0, selected));
+    CU(uurb_cu_ctx_create(&s->context, selected));
     current = 1;
     if (import_image(&s->images[0], &source_fd, source_bytes, width, height) ||
         import_image(&s->images[1], &destination_fd, destination_bytes, width, height)) goto done;

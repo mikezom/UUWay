@@ -1,7 +1,7 @@
 /* Isolated hardware lifecycle tests. No production entry point. */
 #define _GNU_SOURCE
 #include "native_cuda_encode_session.h"
-#include <cuda.h>
+#include "native_cuda_compat.h"
 #include <dirent.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -38,7 +38,7 @@ int uurb_encoder_probe_lifecycle(int fd, uint64_t bytes, const unsigned char uui
         if (cuDeviceGetUuid(&candidate, i) != CUDA_SUCCESS) return 1;
         if (!memcmp(candidate.bytes, uuid, 16)) selected = i;
     }
-    if (selected < 0 || cuCtxCreate(&sentinel, 0, selected) != CUDA_SUCCESS) return 1;
+    if (selected < 0 || uurb_cu_ctx_create(&sentinel, selected) != CUDA_SUCCESS) return 1;
     for (int cycle = 0; cycle < 4; ++cycle) {
         for (int codec = 0; codec < 2; ++codec) {
             s = uurb_encoder_open(fcntl(fd, F_DUPFD_CLOEXEC, 0), bytes, uuid, width, height, codec, 40000000);

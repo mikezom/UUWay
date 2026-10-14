@@ -6,9 +6,9 @@ bash "$repo_dir/scripts/build-nvenc-query-probe.sh"
 work="$repo_dir/build/gpu-relay"
 stage="$repo_dir/build/native-presenter"
 common=(-std=c11 -O2 -Wall -Wextra -Werror)
-winincludes=(-I "$work/wine-dev/usr/include/wine" -I "$work/wine-dev/usr/include/wine/wine/windows"
+winincludes=(-I "${UURB_WINE_HEADERS:-$work/wine-dev/usr/include/wine}" -I "${UURB_WINE_HEADERS:-$work/wine-dev/usr/include/wine}/windows"
     -I "$work/nv-codec-headers/include")
-/opt/wine-stable/bin/winegcc -m64 -shared "${common[@]}" "${winincludes[@]}" \
+"${UURB_WINE_BIN:-/opt/wine-stable/bin}/winegcc" -m64 -shared "${common[@]}" "${winincludes[@]}" \
     -o "$stage/uurb-nvenc-encode.dll" "$repo_dir/src/uu_nvenc_query.spec" \
     "$repo_dir/src/uu_nvenc_encode.c" "$repo_dir/src/uu_d3d11_encode_session.c" \
     "$repo_dir/src/uu_d3d11_frame_adapter.c" "$stage/native_nvenc_query.o" \

@@ -1,83 +1,66 @@
-# Manjaro KDE: native AUR build status
+# Manjaro KDE: native AUR build
 
-The intended AUR package is `uuway-git`: build the matching fork revision's
-Windows DLLs and Linux workers from source on an Arch/Manjaro host, then install
-the resulting files with pacman. An Ubuntu-built `.deb`, upstream 1.2.0 binary,
-or a copy of another user's Wine prefix is **not** a native source build. There
-is no published or verified `uuway-git` package yet. Do not submit a PKGBUILD
-that only repackages the old `.deb` or silently picks up ignored `build/` files.
+`packaging/aur/PKGBUILD` builds the DLLs, workers, DXVK patch, helpers and
+Fcitx add-on from source on Arch/Manjaro. It stages the same runtime file list
+as the Debian package, without Debian packaging or installing files from the
+maintainer's machine. **AUR publication and clean `makepkg` verification are
+pending.** Do not submit or install an unverified package.
 
-## Snapshot of the test host (2026-10-14)
+## Build dependencies and version boundary
 
-Manjaro KDE Plasma Wayland, kernel `6.18.49-1-MANJARO`, NVIDIA RTX 3060 Laptop.
-These are observations, **not** AUR version constraints or a guarantee of
-compatibility on another machine. Check your own versions with `pacman -Q`.
+The native compiler, MinGW, Meson, Ninja, Vulkan/GLSL, Fcitx and CUDA headers
+come from pacman. The tested build uses the system CUDA 13.3 headers and stub
+at `/opt/cuda`; CUDA 12.1 retains its original three-argument context API.
+The compatibility shim selects CUDA 13.3's four-argument API at compile time.
+The resulting binary references the API provided by the installed NVIDIA
+driver; building successfully does not guarantee all NVENC/display operations
+on another GPU/driver. Verify the driver before using UUWay.
 
-| Component | Installed package/version | Build implication |
-| --- | --- | --- |
-| Plasma, KWin, KScreen | `plasma-desktop 6.7.4-1`, `kwin 6.7.4-7`, `kscreen 6.7.4-1` | KDE Portal, single physical output |
-| Portal, PipeWire | `xdg-desktop-portal-kde 6.7.4-2`, `pipewire 1:1.6.8-1` | Screen capture and input consent |
-| NVIDIA driver userspace | `nvidia-utils 610.57.04-1`, `lib32-nvidia-utils 610.57.04-1` | NVENC and `libcuda.so.1` at runtime |
-| Fcitx | `fcitx5 5.1.22-1` | Native text add-on |
-| Python and tray | `python 3.14.7-1`, `python-gobject 3.56.3-1`, `python-dbus 1.4.0-2`, `libappindicator 12.10.1-2` | Console/tray on KDE |
-| System Wine | `wine 11.17-1` | **Not** the required Wine 11.0 protocol |
-| Active Wine runtime | `~/.local/opt/uuway/wine-11.0/bin/wine` reports `wine-11.0` | The running `wineserver` resolves under this private tree; this is the version the bridge actually uses |
-| CUDA | `cuda 13.3.1-1` | Its `cuda.h` declares `CUDA_VERSION 13030`; **not** the pinned 12.1 headers |
-| C toolchain | `gcc 16.2.1+r23+gd564253eb6c8-1`, `glibc 2.44+r24+g16be1518495f-1`, `glslang 1:1.4.357.0-1` | Existing native builds used GCC 11 and need retesting |
+The native Wine GPU adapter uses Wine **11.0** private server protocol 930.
+The system Wine 11.17 cannot be substituted for that runtime. `makepkg` obtains
+the SHA-256-verified official WineHQ 11.0 amd64 `.deb` as a build input and
+places its Wine files under `/opt/uuway/wine-11.0` inside the pacman package.
+This is **not** an Ubuntu build or a `.deb` installation, and does not replace
+`/usr/bin/wine`. The Arch Wine package supplies generated development headers
+for building; pinned Wine 11.0 source provides its private server header.
+DXVK and its submodules are also fixed to reviewed revisions. No official UU
+installer, account credentials, Wine prefix or Portal tokens are packaged.
 
-The running capture executable references `cuCtxCreate_v2`, while the
-installed CUDA 13.3 header maps `cuCtxCreate` to `cuCtxCreate_v4`. The local
-NVIDIA driver exports both, but this does **not** mean rebuilding against the
-new header reproduces the tested binary. `pacman -Q wine cuda` lists installed
-system packages, not the Wine runtime or headers used for the running bridge.
+## Build machine (2026-10-14)
 
-The host did **not** have pacman-installed `xorg-server-xvfb`, `xclip`,
-`lib32-freetype2` or `lib32-libpng`: its earlier local test used extracted,
-user-private packages instead. Those local extracts are not package-managed
-dependencies and must not be assumed to exist on another machine. The host
-also lacked `mingw-w64-gcc`, `meson` and `ninja` at this snapshot.
+An independent Manjaro KDE test machine at `192.168.31.37` has an NVIDIA
+RTX 4090 Laptop GPU, driver `610.57.04`, Wine `11.17-1`, CUDA `13.3.1-1`,
+Fcitx5 `5.1.22-1` and GCC `16.2.1`. We installed Arch build dependencies
+`mingw-w64-gcc`, `meson`, `ninja` and `vulkan-headers`. Its native source build
+completed, the CUDA context API was exercised against the real driver, and
+the staged runtime produced a verified 26-component user bundle with no
+unresolved ELF dependencies. This does **not** establish live UU/NVENC/Portal
+acceptance: the machine does not yet have the official UU Windows installer
+or a logged-in UU prefix.
 
-## Required before publishing
+On the original workstation (RTX 3060 Laptop, same Wine and CUDA pacman
+versions), the running bridge still uses a separate private Wine 11.0 and
+the older CUDA 12.1-built capture binary. Do not confuse installed toolkit
+versions with the versions used to build a running executable.
 
-1. Build against Wine **11.0** headers, import libraries and `winegcc` on
-   Arch, with an installable, reproducible way to obtain them. Arch's historical
-   repository has `wine-11.0-1-x86_64.pkg.tar.zst`, but extracting an old
-   package is not yet a validated way to relocate and run Wine alongside the
-   system version. The existing
-   scripts hardcode `/opt/wine-stable/bin/winegcc` and download Wine 9
-   development headers. The host's private Wine 11.0 installation has no
-   installed development headers, while system Wine is 11.17. Merely changing
-   `PATH` or symlinking system Wine does not solve protocol compatibility.
-2. Supply **CUDA 12.1** driver API headers and link stub without overwriting
-   the system CUDA 13.3 installation. Arch's historical CUDA 12.1 package is
-   about 1.5 GB to download; a smaller, independently verified Arch-native
-   header/stub source would make the AUR build more practical. The scripts expect
-   `/usr/local/cuda/include/cuda.h` and link via the CUDA 12.1 stub; 13.3
-   renames some driver symbols. Build inputs must be documented and fetched
-   and verified in the package's source phase.
-3. Build the patched DXVK 3.1, MinGW components, Wine backends, native
-   capture workers, helpers and Fcitx module with the Arch toolchain. Current
-   `scripts/prepare-dxvk-capture.py`, the DXVK cross file and build scripts
-   select Ubuntu `.deb` cross-tools or hardcoded Wine/CUDA paths. Declare Arch
-   build dependencies such as `mingw-w64-gcc`, `meson`, `ninja`, `glslang`,
-   `pkgconf`, `vulkan-headers`, `pipewire`, `gst-plugins-base` and `fcitx5`;
-   resolve compatibility before treating the build as supported.
-4. Stage only the matching revision's outputs, following
-   `packaging/deb_manifest.py` for runtime files. Test `makepkg` in a clean
-   checkout without using the test host's ignored `build/` cache. Audit ELF
-   dependencies on Manjaro, test `uuway doctor`, `uuway setup` with the
-   official Windows installer, KDE consent, cursor motion, tray and removal.
-   A successful `makepkg --printsrcinfo` is **not** a build test. Only then
-   upload the PKGBUILD and `.SRCINFO` to AUR.
+## Installation and testing
 
-The existing package/update code still contains apt/dpkg-only paths. A native
-Arch package must not enable `uuway update install` or `rollback`; upgrade
-and removal must be handled by pacman. Do not use `./install.sh` or install a
-`.deb` on Manjaro. Avoid publishing a recipe requiring the maintainer's
-private paths or privileged Docker access. The user's official UU installer,
-credentials, private Wine prefix and Portal tokens must never go into AUR or
-the GitHub repository.
+From this repository, `packaging/aur/PKGBUILD` is the reviewable recipe.
+After a verified AUR publication, run `makepkg -si` in the cloned AUR package
+directory as an ordinary user. Then install the official Windows UU Remote
+host and complete KDE screen-sharing consent on the **target machine**:
 
-For the current single-output KDE runtime behavior and known audio limitation,
-see [manjaro-kde.md](manjaro-kde.md). For installation on a different machine,
-see [install-other-machines.md](install-other-machines.md).
+```bash
+uuway doctor
+uuway setup --installer /path/to/UURemote_Setup.exe
+uuway doctor
+```
+
+`setup` may require interactive desktop login and consent; do not provide UU
+credentials to the package builder. Keep one physical output active during
+initial tests. AUR upgrades are handled by pacman/AUR tools followed by
+`uuway refresh`; `uuway update install`/`rollback` remain disabled on Arch.
+Before publishing, run clean `makepkg` and inspect the built package and
+runtime on the target machine. The builder should not rely on ignored `build/`
+files or an installed Docker image. See [manjaro-kde.md](manjaro-kde.md) for
+known KDE and audio limitations.

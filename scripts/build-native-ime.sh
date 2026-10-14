@@ -10,7 +10,9 @@ headers="${UURB_FCITX5_HEADERS:-$repo_dir/build/fcitx-ime-deps/usr/include/Fcitx
 }
 stage="$repo_dir/build/native-ime"
 mkdir -p "$stage"
-c++ -std=c++17 -O2 -fPIC -shared -Wall -Wextra -Werror \
+cxx_standard=c++17
+[[ "${UURB_ARCH_BUILD:-0}" != 1 ]] || cxx_standard=c++20
+c++ "-std=$cxx_standard" -O2 -fPIC -shared -Wall -Wextra -Werror \
     -I"$headers/Core" -I"$headers/Utils" -I"$headers/Config" \
     "$repo_dir/src/uu_fcitx_native_ime.cpp" \
     -l:libFcitx5Core.so.7 -l:libFcitx5Utils.so.2 \

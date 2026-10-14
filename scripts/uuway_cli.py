@@ -37,7 +37,8 @@ PYTHON = '/usr/bin/python3'
 WINE_DIR = wine_bin_directory()
 WINE_SERIES = 'wine-11.0'
 WINE_PIN = Path('/etc/apt/preferences.d/uuway-wine')
-CUDA_HEADER = Path('/usr/local/cuda/include/cuda.h')
+CUDA_HEADER = (Path('/opt/cuda/include/cuda.h') if Path('/var/lib/pacman/local').is_dir()
+               else Path('/usr/local/cuda/include/cuda.h'))
 SERVICES = ('uu-native-display', 'uu-native-text', 'uu-native-bridge')
 
 
@@ -278,7 +279,9 @@ def check_environment(ctx):
         for line in Path('/etc/os-release').read_text().splitlines():
             key, _, value = line.partition('=')
             release[key] = value.strip('"')
-    if release.get('ID') == 'ubuntu' and release.get('VERSION_ID') == '24.04':
+    if release.get('ID') in ('manjaro', 'arch') and plasma_wayland():
+        ok('Arch/Manjaro KDE Plasma Wayland')
+    elif release.get('ID') == 'ubuntu' and release.get('VERSION_ID') == '24.04':
         ok('Ubuntu 24.04')
     else:
         warn(f'UUWay 只在 Ubuntu 24.04 上验证过（当前：{release.get("PRETTY_NAME", "未知")}），继续但不保证可用。')
@@ -1171,18 +1174,19 @@ def command_doctor(args):
         cuda = ctx.probe(['/opt/cuda/bin/nvcc', '--version'])
         installed = re.search(r'release ([\d.]+)', cuda.stdout) if cuda.returncode == 0 else None
         header_version = cuda_header_version(header)
-        if header_version == 12010:
-            detail = str(header)
+        supported_header = header_version in (12010, 13030)
+        if supported_header:
+            detail = f'{header} (CUDA {header_version // 1000}.{header_version % 1000 // 10})'
         elif header_version is not None:
-            detail = f'{header} 是 CUDA {header_version // 1000}.{header_version % 1000 // 10}；需要 CUDA 12.1'
+            detail = f'{header} 是 CUDA {header_version // 1000}.{header_version % 1000 // 10}；未验证此版头文件'
         else:
             detail = ((f'{system_header} (CUDA {installed.group(1) if installed else "版本未知"}) 已安装；'
-                       if system_header.is_file() else '') + f'构建需要 CUDA 12.1 头文件：{header}')
+                       if system_header.is_file() else '') + f'缺少 CUDA 开发头文件：{header}')
         prebuilt = (ROOT / 'build/native-presenter/uu-pipewire-native-probe').is_file()
-        if prebuilt and header_version != 12010:
-            detail += '；已安装预构建运行时，仅重新编译需要这些头文件'
-        check('ok' if header_version == 12010 else 'warn' if prebuilt else 'fail',
-              'CUDA 12.1 构建头文件', detail)
+        if prebuilt and not supported_header:
+            detail += '；已有运行时，重新编译前需验证 CUDA 版本'
+        check('ok' if supported_header else 'warn' if prebuilt else 'fail',
+              'CUDA 构建头文件', detail)
     if version and version.startswith(WINE_SERIES) and not plasma_wayland():
         check('ok' if WINE_PIN.is_file() else 'warn', 'WineHQ 已固定在 11.0 系列',
               str(WINE_PIN) if WINE_PIN.is_file() else '升级 WineHQ 可能让 UUWay 无法采集画面；运行 uuway setup --only wine')
@@ -1555,6 +1559,8 @@ def update_rollback(ctx, args):
 
 
 def command_update(args):
+    if Path('/var/lib/pacman/local').is_dir() and args.action in ('install', 'rollback'):
+        raise SetupError('Arch/Manjaro 请使用 pacman 或 AUR 助手更新和回滚，不能安装 .deb。')
     if plasma_wayland() and args.action in ('install', 'rollback'):
         raise SetupError('自动更新与回滚使用 apt/dpkg，仅支持 Ubuntu；Manjaro 请手动更新源码和运行时。')
     ctx = Context(args)
@@ -1618,12 +1624,16 @@ def command_uninstall(args):
     if turned_on_autologin:
         print('\n开机自动登录是 UUWay 开启的，卸载没有改动它；它的记录已随 --purge 删除，要关闭请编辑 GDM 配置。'
               if args.purge else '\n开机自动登录是 UUWay 开启的，卸载没有改动它；要关闭：uuway autologin off')
+    remove_command = 'sudo pacman -R uuway-git' if Path('/var/lib/pacman/local').is_dir() else 'sudo apt remove uuway'
     print('\nWine prefix（含 UU 登录信息）没有动：' + str(ctx.prefix)
-          + '\n不再需要时可手动删除；要卸载程序本身：sudo apt remove uuway')
+          + '\n不再需要时可手动删除；要卸载程序本身：' + remove_command)
     return 0
 
 
 def installed_version():
+    if Path('/var/lib/pacman/local').is_dir():
+        result = subprocess.run(['pacman', '-Q', 'uuway-git'], capture_output=True, text=True, check=False)
+        return result.stdout.split(maxsplit=1)[1].strip() if result.returncode == 0 else '源码目录'
     result = subprocess.run(['dpkg-query', '-W', '-f=${Version}', 'uuway'], capture_output=True, text=True,
                             check=False) if shutil.which('dpkg-query') else None
     return result.stdout if result and result.returncode == 0 and result.stdout else '源码目录'
