@@ -24,7 +24,7 @@ if ! git -C "$source_dir" apply --reverse --check "$patch_file" 2>/dev/null; the
     git -C "$source_dir" apply --check "$patch_file"
     git -C "$source_dir" apply "$patch_file"
 fi
-git -C "$source_dir" diff -- src/dxgi/dxgi_output.cpp | cmp - "$patch_file"
+git -C "$source_dir" -c core.abbrev=7 diff -- src/dxgi/dxgi_output.cpp | cmp - "$patch_file"
 git -C "$source_dir" diff --exit-code -- . ':(exclude)src/dxgi/dxgi_output.cpp'
 git -C "$source_dir" diff --cached --exit-code
 if ! cmp -s "$repo_dir/src/dxvk_capture_hook.h" "$source_dir/src/dxgi/dxgi_uurb_capture.h"; then
