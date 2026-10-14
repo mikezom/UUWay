@@ -386,6 +386,7 @@ class DesktopImageMappingTests(unittest.TestCase):
             self.assertEqual(calls[0][0][1:4], ['reg', 'add', r'HKCU\Control Panel\Desktop'])
             self.assertTrue(any('uuway-penguin.bmp' in value for value in calls[0][0]))
             self.assertEqual(calls[0][1]['env']['WINEPREFIX'], str(prefix))
+            self.assertEqual(calls[0][1]['env']['WINEDLLOVERRIDES'], 'mscoree,mshtml=')
             self.assertEqual(calls[-2][0][1:], ['-k'])
             self.assertEqual(calls[-1][0][1:], ['-w'])
 

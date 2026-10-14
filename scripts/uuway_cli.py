@@ -161,7 +161,10 @@ class Context:
         return self.home / '.config/systemd/user'
 
     def wine_env(self, **extra):
-        return dict(os.environ, WINEPREFIX=str(self.prefix), WINEDEBUG='-all', **extra)
+        values = dict(WINEPREFIX=str(self.prefix), WINEDEBUG='-all',
+                      WINEDLLOVERRIDES='mscoree,mshtml=')
+        values.update(extra)
+        return dict(os.environ, **values)
 
     def run(self, argv, *, env=None, capture=False, check=True):
         """Show a command and run it; a dry run only shows it."""

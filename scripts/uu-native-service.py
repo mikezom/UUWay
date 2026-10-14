@@ -476,7 +476,8 @@ class DesktopImageMapping:
         image = self.image()
         if image is None:
             return False
-        environment = dict(os.environ, WINEPREFIX=str(self.prefix), WINEDEBUG='-all')
+        environment = dict(os.environ, WINEPREFIX=str(self.prefix), WINEDEBUG='-all',
+                           WINEDLLOVERRIDES='mscoree,mshtml=')
         key = r'HKCU\Control Panel\Desktop'
         try:
             for name, value in (('Wallpaper', trial.winpath(image)),

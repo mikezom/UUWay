@@ -381,6 +381,7 @@ class PrefixStepTests(CliCase):
             nonlocal running, waited
             command = [str(part) for part in argv]
             self.assertEqual(kwargs['env']['WINEPREFIX'], str(ctx.prefix))
+            self.assertEqual(kwargs['env']['WINEDLLOVERRIDES'], 'mscoree,mshtml=')
             if 'reg' in command:
                 running = True
             elif command[-1] == '-k':
