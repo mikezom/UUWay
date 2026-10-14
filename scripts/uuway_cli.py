@@ -464,6 +464,8 @@ def prefix_run(ctx):
     # UU's terminal starts PowerShell; Wine must load UUWay's stand-in, not its placeholder.
     ctx.run([wine, 'reg', 'add', r'HKCU\Software\Wine\DllOverrides', '/v', 'powershell.exe',
              '/t', 'REG_SZ', '/d', 'native', '/f'], env=ctx.wine_env())
+    # Even a registry command starts UU's auto-start service in this prefix.
+    ctx.run([wineserver, '-k'], env=ctx.wine_env(), check=False)
     ctx.run([wineserver, '-w'], env=ctx.wine_env())
 
 

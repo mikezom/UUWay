@@ -369,6 +369,32 @@ class StartStepTests(CliCase):
 
 
 class PrefixStepTests(CliCase):
+    def test_registry_autostart_is_stopped_before_waiting_on_signed_in_prefix(self):
+        ctx = self.record_commands(self.context())
+        ctx.args.login = False
+        ctx.server_exe.parent.mkdir(parents=True)
+        ctx.server_exe.write_bytes(b'MZ')
+        running = False
+        waited = False
+
+        def run(argv, **kwargs):
+            nonlocal running, waited
+            command = [str(part) for part in argv]
+            self.assertEqual(kwargs['env']['WINEPREFIX'], str(ctx.prefix))
+            if 'reg' in command:
+                running = True
+            elif command[-1] == '-k':
+                running = False
+            elif command[-1] == '-w':
+                self.assertFalse(running, 'UU auto-start service would keep wineserver -w blocked')
+                waited = True
+            return completed(command)
+
+        ctx.run = run
+        with patch.object(cli, 'signed_in', return_value=True):
+            self.quiet(cli.prefix_run, ctx)
+        self.assertTrue(waited)
+
     def test_signed_in_ignores_the_guest_profile(self):
         ctx = self.context()
         settings = self.prefix / "drive_c/users/u/AppData/Local/GameViewer"
