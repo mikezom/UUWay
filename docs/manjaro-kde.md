@@ -38,7 +38,9 @@ missing Wine, NVENC libraries, uinput permissions, portal consent, and services.
 ## Prerequisites for a source trial
 
 1. Obtain the official Windows UU installer yourself. The project does not ship it.
-2. Provide **WineHQ stable 11.0** at `/opt/wine-stable/bin/` (wine, wineboot,
+2. The native package provides **WineHQ stable 11.0** at
+   `/opt/uuway/wine-11.0/bin/`. For a manual source trial, provide it at
+   `/opt/wine-stable/bin/` (wine, wineboot,
    wineserver and winegcc). The currently available Manjaro `wine` package may
    have a different version and layout. Do not silently substitute it: the
    private capture bridge is built against the 11.0 Wine server protocol.
@@ -50,7 +52,8 @@ missing Wine, NVENC libraries, uinput permissions, portal consent, and services.
    Ubuntu source-build instructions in [build.md](build.md) still use CUDA 12.1.
 4. Ensure `xdg-desktop-portal-kde`, PipeWire, `kscreen-doctor`, `/usr/bin/python3`
    with `dbus` and `gi`, `xvfb-run`, and a working `/dev/uinput` are present.
-   Install the input rule in `config/70-uurb-native-input.rules` only after
+   The pacman package supplies the input rule and console identity. For a
+   manual source trial, install `config/70-uurb-native-input.rules` only after
    reviewing its permissions. Install the console with
    `scripts/install-uu-settings.py` before authorizing capture: the KDE Portal
    uses its `uuway.desktop` identity to remember sharing permissions.

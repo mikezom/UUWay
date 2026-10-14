@@ -3,8 +3,10 @@
 `packaging/aur/PKGBUILD` builds the DLLs, workers, DXVK patch, helpers and
 Fcitx add-on from source on Arch/Manjaro. It stages the same runtime file list
 as the Debian package, without Debian packaging or installing files from the
-maintainer's machine. **AUR publication and clean `makepkg` verification are
-pending.** Do not submit or install an unverified package.
+maintainer's machine. On 2026-10-14 a fresh `makepkg -C --holdver` source build
+completed on an independent Manjaro KDE machine, and its pacman package was
+installed there. This was a fresh build directory, not a clean chroot test.
+Live remote-control acceptance remains pending; KDE support is experimental.
 
 ## Build dependencies and version boundary
 
@@ -18,7 +20,7 @@ on another GPU/driver. Verify the driver before using UUWay.
 
 The native Wine GPU adapter uses Wine **11.0** private server protocol 930.
 The system Wine 11.17 cannot be substituted for that runtime. `makepkg` obtains
-the SHA-256-verified official WineHQ 11.0 amd64 `.deb` as a build input and
+the SHA-256-verified official WineHQ 11.0 main, amd64 and i386 `.deb` files as build inputs and
 places its Wine files under `/opt/uuway/wine-11.0` inside the pacman package.
 This is **not** an Ubuntu build or a `.deb` installation, and does not replace
 `/usr/bin/wine`. The Arch Wine package supplies generated development headers
@@ -33,10 +35,12 @@ RTX 4090 Laptop GPU, driver `610.57.04`, Wine `11.17-1`, CUDA `13.3.1-1`,
 Fcitx5 `5.1.22-1` and GCC `16.2.1`. We installed Arch build dependencies
 `mingw-w64-gcc`, `meson`, `ninja` and `vulkan-headers`. Its native source build
 completed, the CUDA context API was exercised against the real driver, and
-the staged runtime produced a verified 26-component user bundle with no
-unresolved ELF dependencies. This does **not** establish live UU/NVENC/Portal
-acceptance: the machine does not yet have the official UU Windows installer
-or a logged-in UU prefix.
+the installed runtime produced a verified 26-component user bundle. Pacman
+reported 2,980 installed files with none missing, and the GTK console smoke
+test passed. The official UU 4.42.0.2770 installer was installed into a fresh
+prefix on that machine; its unpatched server matches the reviewed SHA-256.
+The user's account and Portal permission still need interactive setup.
+This does **not** establish live UU/NVENC/Portal acceptance.
 
 On the original workstation (RTX 3060 Laptop, same Wine and CUDA pacman
 versions), the running bridge still uses a separate private Wine 11.0 and
@@ -45,10 +49,24 @@ versions with the versions used to build a running executable.
 
 ## Installation and testing
 
-From this repository, `packaging/aur/PKGBUILD` is the reviewable recipe.
-After a verified AUR publication, run `makepkg -si` in the cloned AUR package
-directory as an ordinary user. Then install the official Windows UU Remote
-host and complete KDE screen-sharing consent on the **target machine**:
+Enable the distribution's multilib repository first: the pinned Wine runtime
+requires 32-bit libraries. Build as an ordinary user with the system CUDA
+toolkit and Wine development headers installed. AUR helpers can install the
+declared dependencies. The source downloads include roughly 250 MB of Wine
+archives; the resulting package occupies about 1.5 GB installed.
+
+The recipe is `packaging/aur/PKGBUILD` in this GitHub repository. To test it
+before AUR publication, copy that file into an empty directory and run
+`makepkg -si`. After publication, the equivalent AUR workflow is:
+
+```bash
+git clone https://aur.archlinux.org/uuway-git.git
+cd uuway-git
+makepkg -si
+```
+
+Then obtain the official Windows UU Remote installer and complete setup from
+a terminal in the **target machine's** logged-in Plasma Wayland desktop:
 
 ```bash
 uuway doctor
@@ -60,7 +78,9 @@ uuway doctor
 credentials to the package builder. Keep one physical output active during
 initial tests. AUR upgrades are handled by pacman/AUR tools followed by
 `uuway refresh`; `uuway update install`/`rollback` remain disabled on Arch.
-Before publishing, run clean `makepkg` and inspect the built package and
-runtime on the target machine. The builder should not rely on ignored `build/`
-files or an installed Docker image. See [manjaro-kde.md](manjaro-kde.md) for
-known KDE and audio limitations.
+The build does not rely on ignored `build/` files or Docker. Private Wine
+retains its upstream layout under `/opt/uuway`, which produces a generic
+`namcap` ELF-location warning; its upstream binaries also retain WineHQ's
+hardening settings. Scanner/camera and Wine development utilities are optional
+and are not part of the UU remote-control path. See
+[manjaro-kde.md](manjaro-kde.md) for known KDE and audio limitations.
