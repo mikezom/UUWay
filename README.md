@@ -65,7 +65,7 @@ UUWay 是一层**适配层**：UU 照常调用它在任何一台 Windows 电脑�
 
 **准备：**
 
-> Manjaro KDE Wayland：已在一台单屏 NVIDIA 主机上验证采集、编码和本地服务；其他硬件尚未验证，也没有 Manjaro 一键安装包。Ubuntu 的 `.deb` 和 `install.sh` 不适用。见 [Manjaro KDE 实验性适配说明](docs/manjaro-kde.md)和 [AUR 原生构建状态及本机软件包版本](docs/aur-manjaro-kde.md)。
+> Manjaro KDE Wayland：AUR 已发布 `uuway-git`，可用 `yay -S uuway-git` 安装。已在独立 Manjaro KDE 机器上验证源码构建、pacman 安装、首次登录窗口和编码检测；该机器的实际远控测试仍待完成，KDE 支持属于实验性适配。Ubuntu 的 `.deb` 和 `install.sh` 不适用。见 [Manjaro KDE 实验性适配说明](docs/manjaro-kde.md)和 [AUR 原生构建状态及本机软件包版本](docs/aur-manjaro-kde.md)。
 
 **在其他电脑安装这个 fork 的修改版：**请按[跨机器安装说明](docs/install-other-machines.md)从当前源码构建。上游 Releases 的旧包不包含本 fork 的 KDE 采集修复和托盘改动；不要将本机的 UU 登录信息、Wine 前缀或 Portal 授权文件复制到另一台机器。
 

@@ -37,10 +37,13 @@ Fcitx5 `5.1.22-1` and GCC `16.2.1`. We installed Arch build dependencies
 `mingw-w64-gcc`, `meson`, `ninja` and `vulkan-headers`. Its native source build
 completed, the CUDA context API was exercised against the real driver, and
 the installed runtime produced a verified 26-component user bundle. Pacman
-reported 2,980 installed files with none missing, and the GTK console smoke
+reported 2,982 installed files with none missing, and the GTK console smoke
 test passed. The official UU 4.42.0.2770 installer was installed into a fresh
 prefix on that machine; its unpatched server matches the reviewed SHA-256.
-The user's account and Portal permission still need interactive setup.
+The native first-login helper opened visible UU windows, the KDE tray was
+registered, and UU's codec detector completed H.264 and HEVC first-frame
+encoding on the system CUDA driver. The user's account and Portal permission
+still need interactive setup.
 This does **not** establish live UU/NVENC/Portal acceptance.
 
 On the original workstation (RTX 3060 Laptop, same Wine and CUDA pacman
