@@ -419,6 +419,33 @@ class PrefixStepTests(CliCase):
         with self.assertRaises(cli.SetupError):
             self.quiet(cli.prefix_run, ctx)
 
+    def test_kde_login_uses_a_verified_bundle_and_native_supervisor(self):
+        ctx = self.record_commands(self.context())
+        ctx.args.login = True
+        ctx.server_exe.parent.mkdir(parents=True)
+        ctx.server_exe.write_bytes(b'MZ')
+        (self.root / 'bundle').mkdir()
+        commands = []
+
+        def run(argv, **kwargs):
+            command = [str(part) for part in argv]
+            commands.append(command)
+            if 'package' in command:
+                return completed(command, out=json.dumps({'bundle': str(self.root / 'bundle')}))
+            return completed(command)
+
+        ctx.run = run
+        with patch.object(cli, 'plasma_wayland', return_value=True), \
+                patch.object(cli, 'signed_in', return_value=True), \
+                patch.object(cli.subprocess, 'Popen') as plain_login:
+            self.quiet(cli.prefix_run, ctx)
+        plain_login.assert_not_called()
+        login = next(command for command in commands if any(part.endswith('uu-native-login.py') for part in command))
+        self.assertIn(str(self.root / 'bundle'), login)
+        self.assertIn('--wait-for-user', login)
+        self.assertLess(next(i for i, command in enumerate(commands) if 'package' in command),
+                        commands.index(login))
+
 
 class EnvironmentTests(CliCase):
     def check(self, env, nvidia=0, euid=1000):

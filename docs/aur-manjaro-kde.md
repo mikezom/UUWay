@@ -76,7 +76,11 @@ uuway doctor
 ```
 
 `setup` may require interactive desktop login and consent; do not provide UU
-credentials to the package builder. Keep one physical output active during
+credentials to the package builder. On KDE, first login uses the same native
+bootstrap as the bridge with temporary verified loader links. It restores the
+visible UU window and removes its own links and registry changes before
+requesting Portal authorization. This is needed when a plain Wine launch
+does not open the UU login window. Keep one physical output active during
 initial tests. AUR upgrades are handled by pacman/AUR tools followed by
 `uuway refresh`; `uuway update install`/`rollback` remain disabled on Arch.
 The build does not rely on ignored `build/` files or Docker. Private Wine

@@ -7,3 +7,5 @@ x86_64-w64-mingw32-gcc -std=c11 -O2 -Wall -Wextra -Werror -municode \
     -o "$stage/uu-native-bootstrap.exe" "$repo_dir/src/uu_native_wine_bootstrap.c" -ladvapi32
 x86_64-w64-mingw32-gcc -std=c11 -O2 -Wall -Wextra -Werror -mwindows \
     -o "$stage/uu-native-winlogon.exe" "$repo_dir/src/winlogon.c"
+x86_64-w64-mingw32-gcc -std=c11 -O2 -Wall -Wextra -Werror \
+    -o "$stage/uu-show-login.exe" "$repo_dir/src/uu_show_login.c"

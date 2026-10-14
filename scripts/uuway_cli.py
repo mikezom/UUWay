@@ -441,12 +441,21 @@ def prefix_run(ctx):
         ok('UU 已安装')
         ctx.args.login = True
     if getattr(ctx.args, 'login', False) or not signed_in(ctx):
-        info('接下来会打开 UU 窗口：请登录你的 UU 账号，登录成功后从托盘图标完全退出 UU。')
-        if not ctx.dry_run:
-            subprocess.Popen([str(wine), r'C:\Program Files\Netease\GameViewer\GameViewer.exe'],
-                             env=ctx.wine_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             start_new_session=True)
-        ctx.wait_for_user('在 UU 里登录并完全退出')
+        if plasma_wayland():
+            info('接下来会打开 UU 窗口；请登录，向导检测到登录成功后会自动继续。')
+            ctx.run([wineserver, '-k'], env=ctx.wine_env(), check=False)
+            ctx.run([wineserver, '-w'], env=ctx.wine_env())
+            bundle = package_bundle(ctx)
+            ctx.run([PYTHON, ROOT / 'scripts/uu-native-login.py', '--prefix', ctx.prefix,
+                     '--bundle', bundle, '--state-parent', ctx.state_dir,
+                     *(['--wait-for-user'] if signed_in(ctx) else [])])
+        else:
+            info('接下来会打开 UU 窗口：请登录你的 UU 账号，登录成功后从托盘图标完全退出 UU。')
+            if not ctx.dry_run:
+                subprocess.Popen([str(wine), r'C:\Program Files\Netease\GameViewer\GameViewer.exe'],
+                                 env=ctx.wine_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True)
+            ctx.wait_for_user('在 UU 里登录并完全退出')
         if not ctx.dry_run and not signed_in(ctx):
             warn('没有检测到登录信息；如果连接不上，请运行 uuway setup --login 重新登录。')
         ctx.run([wineserver, '-k'], env=ctx.wine_env(), check=False)
