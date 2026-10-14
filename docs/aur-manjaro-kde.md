@@ -6,6 +6,7 @@ as the Debian package, without Debian packaging or installing files from the
 maintainer's machine. On 2026-10-14 a fresh `makepkg -C --holdver` source build
 completed on an independent Manjaro KDE machine, and its pacman package was
 installed there. This was a fresh build directory, not a clean chroot test.
+The verified recipe was published as **`uuway-git`** on AUR on 2026-10-14.
 Live remote-control acceptance remains pending; KDE support is experimental.
 
 ## Build dependencies and version boundary
@@ -30,7 +31,7 @@ installer, account credentials, Wine prefix or Portal tokens are packaged.
 
 ## Build machine (2026-10-14)
 
-An independent Manjaro KDE test machine at `192.168.31.37` has an NVIDIA
+An independent Manjaro KDE test machine has an NVIDIA
 RTX 4090 Laptop GPU, driver `610.57.04`, Wine `11.17-1`, CUDA `13.3.1-1`,
 Fcitx5 `5.1.22-1` and GCC `16.2.1`. We installed Arch build dependencies
 `mingw-w64-gcc`, `meson`, `ninja` and `vulkan-headers`. Its native source build
@@ -55,9 +56,9 @@ toolkit and Wine development headers installed. AUR helpers can install the
 declared dependencies. The source downloads include roughly 250 MB of Wine
 archives; the resulting package occupies about 1.5 GB installed.
 
-The recipe is `packaging/aur/PKGBUILD` in this GitHub repository. To test it
-before AUR publication, copy that file into an empty directory and run
-`makepkg -si`. After publication, the equivalent AUR workflow is:
+The recipe and generated `.SRCINFO` are also kept in `packaging/aur/` in this
+GitHub repository. Install with an AUR helper (`yay -S uuway-git`), or build
+the AUR recipe directly:
 
 ```bash
 git clone https://aur.archlinux.org/uuway-git.git

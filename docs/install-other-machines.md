@@ -56,9 +56,9 @@ Before attempting a fresh KDE installation:
 1. Clone this fork on the target and check its environment from the logged-in
    Plasma Wayland desktop with `/usr/bin/python3 scripts/uuway_cli.py doctor`,
    `kscreen-doctor -j` and `nvidia-smi -L`.
-2. Enable multilib, copy `packaging/aur/PKGBUILD` into a separate empty build
-   directory, and run `makepkg -si`. Once published on AUR, clone
-   `https://aur.archlinux.org/uuway-git.git` instead. The recipe declares the
+2. Enable multilib and install `uuway-git` with an AUR helper, or clone
+   `https://aur.archlinux.org/uuway-git.git` and run `makepkg -si`. A copy of
+   the recipe is kept at `packaging/aur/PKGBUILD`. It declares the
    required compiler, CUDA, Wine headers and runtime dependencies; Docker is
    not required. See [aur-manjaro-kde.md](aur-manjaro-kde.md) for build details.
 3. Run `uuway doctor` from the Plasma desktop. The package installs the
