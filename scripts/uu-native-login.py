@@ -82,7 +82,7 @@ def run(prefix, bundle, state_parent, wait_for_user=False):
                 if wait_for_user:
                     input('登录完成后从 UU 托盘完全退出，然后按回车继续…')
                     break
-            if logged_in(prefix) or launcher.poll() is not None:
+            if (not wait_for_user and logged_in(prefix)) or launcher.poll() is not None:
                 break
             time.sleep(1)
         success = logged_in(prefix) and not stopping

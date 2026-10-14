@@ -413,6 +413,9 @@ class PrefixStepTests(CliCase):
         self.assertEqual(ctx.prefix.stat().st_mode & 0o777, 0o700)
         boot = next(c for c in self.commands if c[0].endswith("wineboot"))
         self.assertIsNotNone(boot)
+        install_index = next(i for i, c in enumerate(self.commands) if c[-1] == '/S')
+        self.assertEqual(self.commands[install_index + 1][-1], '-k')
+        self.assertEqual(self.commands[install_index + 2][-1], '-w')
 
     def test_missing_installer_is_a_clear_error(self):
         ctx = self.record_commands(self.context(installer=self.root / "nope.exe"))

@@ -435,6 +435,8 @@ def prefix_run(ctx):
         if not ctx.dry_run:
             ctx.prefix.chmod(0o700)  # the service refuses a prefix other users can enter
         ctx.run([wine, installer, '/S'], env=ctx.wine_env())
+        # UU installs an auto-start service; stop this owned prefix before waiting.
+        ctx.run([wineserver, '-k'], env=ctx.wine_env(), check=False)
         ctx.run([wineserver, '-w'], env=ctx.wine_env())
         if not ctx.dry_run and not ctx.server_exe.is_file():
             raise SetupError('安装包运行结束，但没有找到 GameViewerServer.exe。')
