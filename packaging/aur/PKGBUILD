@@ -22,7 +22,7 @@ source=('uuway::git+https://github.com/zyk-miao/UUWay.git'
         "${_wine_main}::https://dl.winehq.org/wine-builds/ubuntu/pool/main/w/wine/${_wine_main}"
         "${_wine_i386}::https://dl.winehq.org/wine-builds/ubuntu/pool/main/w/wine/${_wine_i386}"
         'dxvk::git+https://github.com/doitsujin/dxvk.git#commit=70d7508c01201ed3d4bfb33da42ba834eafe3857'
-        'wine-review::git+https://github.com/wine-mirror/wine.git#commit=db11d0fe6a169c457e23d007e20404643d067aa8'
+        'wine-source-11.0.tar.gz::https://codeload.github.com/wine-mirror/wine/tar.gz/db11d0fe6a169c457e23d007e20404643d067aa8'
         'nv-codec-headers::git+https://github.com/FFmpeg/nv-codec-headers.git#commit=e844e5b26f46bb77479f063029595293aa8f812d'
         'directx::git+https://github.com/Joshua-Ashton/mingw-directx-headers.git#commit=9df86f2341616ef1888ae59919feaa6d4fad693d'
         'spirv::git+https://github.com/KhronosGroup/SPIRV-Headers.git#commit=04f10f650d514df88b76d25e83db360142c7b174'
@@ -35,7 +35,8 @@ sha256sums=('SKIP'
             '6cb835e2171b5572b17f1c06729735c2c7e40178239d7fa6c29ef14bd9b40d16'
             '04e7b4b995262c734019099d93277d8f219f7d180ebb65b5ccb3df7f97be1078'
             'b322b50f9e8bd59687840d9a7bad10d70b12ef9bdb873298e858ff93a6205e56'
-            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
+            'SKIP' '18aaee150ad540885b9706ae73ccf6febca904049de2792199a9dc18a2772e6a'
+            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
             '30f9cc326874be344285582275446968cfa4c069db31ce56df312d6644179154')
 
 pkgver() {
@@ -54,7 +55,9 @@ prepare() {
     local tree="$srcdir/uuway"
     install -dm755 "$tree/build/dxvk-capture" "$tree/build/gpu-relay/downloads"
     cp -a "$srcdir/dxvk" "$tree/build/dxvk-capture/source-v3.1"
-    cp -a "$srcdir/wine-review" "$tree/build/gpu-relay/wine-review"
+    install -dm755 "$tree/build/gpu-relay/wine-review"
+    bsdtar -xf "$srcdir/wine-source-11.0.tar.gz" -C "$tree/build/gpu-relay/wine-review" \
+        --strip-components 1 wine-db11d0fe6a169c457e23d007e20404643d067aa8/include
     cp -a "$srcdir/nv-codec-headers" "$tree/build/gpu-relay/nv-codec-headers"
     install -m644 "$srcdir/dxvk-3.1.tar.gz" "$tree/build/gpu-relay/downloads/dxvk-3.1.tar.gz"
     local dxvk="$tree/build/dxvk-capture/source-v3.1"

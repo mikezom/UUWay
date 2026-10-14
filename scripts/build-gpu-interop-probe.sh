@@ -33,6 +33,12 @@ if [[ "${UURB_ARCH_BUILD:-0}" != 1 && ! -d "$work/nv-codec-headers/.git" ]]; the
         https://github.com/FFmpeg/nv-codec-headers.git "$work/nv-codec-headers"
 fi
 for source in wine-review nv-codec-headers; do
+    if [[ "${UURB_ARCH_BUILD:-0}" == 1 && "$source" == wine-review ]]; then
+        [[ -f "$work/wine-review/include/wine/server.h" ]] || {
+            printf 'Missing SHA-256-verified Wine 11.0 source headers\n' >&2; exit 1;
+        }
+        continue
+    fi
     [[ -d "$work/$source/.git" ]] || { printf 'Missing prepared source: %s\n' "$source" >&2; exit 1; }
     expected="$wine_revision"
     [[ "$source" != nv-codec-headers ]] || expected="$codec_revision"
