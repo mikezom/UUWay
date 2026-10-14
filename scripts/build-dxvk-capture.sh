@@ -37,7 +37,9 @@ else
     cross_file="$repo_dir/config/dxvk-capture-win64.ini"
 fi
 if [[ ! -f "$build_dir/build.ninja" ]]; then
-    meson setup "$build_dir" "$source_dir" --cross-file "$cross_file" \
+    # makepkg's ELF linker flags cannot be used by the Windows cross compiler.
+    env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS \
+        meson setup "$build_dir" "$source_dir" --cross-file "$cross_file" \
         --buildtype=release -Denable_d3d8=false -Denable_d3d9=false -Denable_d3d10=false \
         -Denable_d3d11=true -Denable_dxgi=true -Ddxbc-spirv:enable_tests=false -Ddxbc-spirv:enable_tools=false
 fi
