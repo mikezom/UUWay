@@ -42,9 +42,13 @@ test passed. The official UU 4.42.0.2770 installer was installed into a fresh
 prefix on that machine; its unpatched server matches the reviewed SHA-256.
 The native first-login helper opened visible UU windows, the KDE tray was
 registered, and UU's codec detector completed H.264 and HEVC first-frame
-encoding on the system CUDA driver. The user's account and Portal permission
-still need interactive setup.
-This does **not** establish live UU/NVENC/Portal acceptance.
+encoding on the system CUDA driver. The user completed UU login and screen,
+keyboard and clipboard authorization on that machine. Package
+`1.2.0.r73.gc382146-1` completed setup and started the bridge and text services.
+An eight-second native screen capture delivered 642 DMA-BUF frames at
+2560 x 1600. A separate H.264 hardware-encoding check encoded and decoded
+362 frames and confirmed a nonuniform image, without persistent recording.
+This does **not** establish live UU remote-control acceptance.
 
 On the original workstation (RTX 3060 Laptop, same Wine and CUDA pacman
 versions), the running bridge still uses a separate private Wine 11.0 and
@@ -92,3 +96,28 @@ retains its upstream layout under `/opt/uuway`, which produces a generic
 hardening settings. Scanner/camera and Wine development utilities are optional
 and are not part of the UU remote-control path. See
 [manjaro-kde.md](manjaro-kde.md) for known KDE and audio limitations.
+
+## First setup troubleshooting
+
+The setup and desktop-image registry helper disable Wine Mono and Gecko
+loading because those components are not required by this path. If an older
+package displays a Wine Mono installer, completing that dialog does not
+replace Wine itself. Upgrade to the current AUR source before retrying setup.
+The login stage also stops the prefix's automatically started UU service
+before waiting for Wine to exit, so a successful login can advance to screen
+authorization.
+
+On the test machine, screen authorization succeeded but neither the native
+probe nor GStreamer received frames. WirePlumber was running, yet its device
+and connection policy was stalled; only a dummy audio output remained.
+Restarting WirePlumber restored both real audio devices and screen capture:
+
+```bash
+systemctl --user restart wireplumber.service
+uuway setup --only portal --force portal
+```
+
+This restart interrupts current media connections. UUWay does not restart the
+desktop's media manager automatically. A saved Portal grant alone does not
+prove that capture is delivering frames; retry the capture check before
+diagnosing the UU presentation path.
