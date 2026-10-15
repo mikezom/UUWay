@@ -1,137 +1,75 @@
-<div align="center">
+# UUWay for Manjaro KDE
 
-<img src="docs/images/hero.zh.svg" alt="UUWay：网易 UU 远程 Linux 原生被控端" width="100%">
+**在 Manjaro KDE Plasma Wayland 上运行网易 UU 远程的 Linux 被控端。** 本仓库是 [GaryOAO/UUWay](https://github.com/GaryOAO/UUWay) 的 Manjaro KDE 适配分支：通过 Wine 运行官方 Windows 被控端，并使用 KDE 屏幕共享 Portal、PipeWire、NVIDIA GPU 编码及原生输入服务对接 Linux 桌面。
 
-[简体中文](README.md) · [English](README.en.md)
+> 本项目是**被控端**，只能让其他设备远程连接本机；不能在 Linux 上主动控制别人的 UU 设备。请在其他电脑或手机上使用 UU 官方控制端连接。
 
-![Ubuntu 24.04](https://img.shields.io/badge/Ubuntu-24.04-E95420?logo=ubuntu&logoColor=white)
-![GNOME 46 Wayland](https://img.shields.io/badge/GNOME_46-Wayland-4A86CF?logo=gnome&logoColor=white)
-![NVIDIA NVENC](https://img.shields.io/badge/NVIDIA-NVENC-76B900?logo=nvidia&logoColor=white)
-![Wine 11](https://img.shields.io/badge/Wine-11-A30000)
-![Status](https://img.shields.io/badge/状态-正式版-22c55e)
-![License AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-0ea5e9)
+[English](README.en.md) · [Manjaro KDE 适配记录](docs/manjaro-kde.md) · [AUR 构建与测试记录](docs/aur-manjaro-kde.md)
 
-</div>
+## 状态与限制
 
-**网易 UU 远程官方只有 Windows 被控端，没有 Linux 版客户端。** UUWay 让官方原版被控端在 Wine 中运行（磁盘上的文件不做任何修改），再把它依赖的每一个 Windows 接口交给 Linux 原生实现。于是，用手机打开 UU 远程，就能像控制一台 Windows 电脑一样控制你的 Linux 桌面。
+**KDE 支持仍属实验性。** 2026-10-14 在一台独立的 Manjaro KDE 测试机上，已验证 AUR 源码构建、pacman 安装、UU 登录、屏幕及输入授权、桥接服务启动，以及 2560 × 1600 桌面的 DMA-BUF 采集和 H.264 编码/解码（画面非全黑）。`uuway doctor` 为 0 失败、0 警告。**这不等于已完成从另一台设备发起的端到端远控验收。** 本机曾显示画面，但鼠标移动引发的黑屏闪烁仍待真实远控复测；声音也曾出现刺耳噪声，不能保证音频可用。
 
-## ✨ UU 的功能，几乎全部可用
+| 功能 | Manjaro KDE 状态 |
+| --- | --- |
+| 本机作为 UU 被控端、登录与后台服务 | 已在测试机安装并启动；远控连接待验收 |
+| 物理屏幕采集、NVIDIA H.264 硬件编码 | 独立采集及编码/解码测试通过 |
+| 鼠标、键盘与中文输入 | 本机输入服务及 Fcitx5 插件已启动；实际远控需测试 |
+| 文本剪贴板、远程终端与文件传输 | 已接入原项目功能；KDE 上的完整远控流程尚未验收 |
+| 远程调整分辨率/缩放 | KDE 配置为只读；请在本机系统设置中调整 |
+| UU 超级屏（Windows 虚拟显示器） | 不支持；请共享现有物理显示器 |
+| 登录界面或无人登录时的远控 | 不支持；需要先进入 Plasma Wayland 桌面 |
+| 本机远控其他 UU 设备 | 不支持；UUWay 不是控制端 |
 
-| UU 功能 | Linux 上 | 说明 |
-| --- | :---: | --- |
-| 🎞️ 画面串流 | ✅ | GPU 零拷贝 + NVENC 硬件编码，1080p 可达 60 帧 |
-| 🖱️ 鼠标指针 | ✅ | 手机上显示你本机真实的光标主题，放大画面也跟随指针 |
-| ⌨️ 键盘与鼠标 | ✅ | 包括 Win / ⌘ 键，经 libei / uinput 注入 |
-| 🀄 手机输入法 | ✅ | 中文直接提交到当前输入框（Fcitx5） |
-| 🖥️ 分辨率 · 刷新率 · 缩放 | ✅ | UUWay 和 UU 客户端都可选择 Linux 已公布的模式；切换期间保留事务保护，失败会自动回滚 |
-| 💻 **远程终端** | ✅ | 打开的是 Linux 登录 shell，会话常驻、可以多开 |
-| 📋 剪贴板 | ✅ | 文本双向实时同步 |
-| 📁 文件：手机 → 电脑 | ✅ | 粘贴时才传输，下载完成前粘贴会等待 |
-| 📁 文件：其他设备 → Linux 电脑 | ✅ | 接收目录映射到 Linux 的 XDG 下载目录 |
-| 📁 文件：电脑 → 手机 | ✅ | 已实现 |
-| 🪟 超级屏（虚拟显示器） | ❌ | 依赖 Windows 内核驱动（IddCx），Wine 无法加载 |
-| 🔐 GDM 登录界面 | ❌ | 登录界面属于另一个系统会话，UUWay 只在你的桌面会话里工作；远程使用请开启 `uuway autologin on`，崩溃或注销后会自动回到桌面 |
-| 📺 1440p / 4K 60 Hz | ⚠️ | 受显示器（或诱骗器）提供的刷新率限制 |
+目前的 KDE 服务要求**一个已启用、未镜像、未旋转的物理显示器**。UU 在 Wine 中使用的 Xvfb 是内部运行环境，不是要共享的屏幕；首次授权请选择真实显示器。多屏、虚拟屏和无显示器环境不在已验证范围内。其他限制与历史测试见 [Manjaro KDE 适配记录](docs/manjaro-kde.md)。
 
-安装完成后，从应用菜单打开 **UUWay 控制台**。它使用项目已有的 Python + GTK 桥接栈，集中显示服务能力，并可配置输入、文字后端、显示模式、桌面企鹅图片和文件接收目录映射（默认使用 XDG 下载目录）。
+## 安装
 
-Wine 路径会在部署阶段统一对接 Linux：`C:` 保留为 UU 的独立 Wine 前缀，`Z:` 对应 Linux 根目录，桌面、文档、下载、音乐、图片、视频、公共目录和模板目录对应当前用户的 XDG 目录；UU 的接收目录与 Linux 下载目录使用同一映射。光盘和其他设备盘符继续保留 Wine 检测到的 Linux 设备路径。
+准备 Manjaro/Arch **Plasma Wayland** 会话、支持 NVENC 的 NVIDIA 显卡及驱动、已启用的 multilib 仓库，以及自行从官方渠道取得的 UU 远程 **Windows 安装程序**。AUR 构建使用本机 pacman 的 CUDA 开发头文件；经过验证的测试机构建环境为 CUDA 13.3、系统 Wine 11.17。运行时另将经过哈希校验的 WineHQ **11.0** 放在 `/opt/uuway/wine-11.0`，不会替换系统 Wine：GPU 桥接依赖该版本的私有协议。构建需要下载 Wine 等源码/归档，安装后约占 1.5 GB。具体依赖与版本边界见 [AUR 文档](docs/aur-manjaro-kde.md)。
 
-已验证 UU 4.42.0.2770，无需任何补丁（[审计记录](docs/releases/4.42.0.2770-native-review.md)）。UUWay 实现的是公开的 Windows 接口，而不是 UU 内部的偏移地址，所以 UU 升级基本不受影响。
-
-### 💻 亮点：UU 远程终端，直达 Linux shell
-
-UU 的「远程终端」在 Windows 上打开的是 PowerShell；在 UUWay 上，它打开的是**你的 Linux 登录 shell**。
-
-- 终端字节在 PTY 与 UU 之间**原样转发**，没有控制台转换层，vim、htop 这类全屏程序显示正常，中文不乱码；
-- 离开终端页面，**会话继续运行**，回来时自动重绘，还可以同时开多个；
-- 在 UU 里关闭终端，就结束对应的 shell，行为和 Windows 上完全一致。
-
-## 🔧 工作原理
-
-<p align="center">
-  <img src="docs/images/architecture.zh.svg" alt="架构：UU 官方被控端调用的每个 Windows 接口，都由 UUWay 交给 Linux 原生实现" width="100%">
-</p>
-
-UUWay 是一层**适配层**：UU 照常调用它在任何一台 Windows 电脑上都会调用的 API，每一次调用都落到对应的 Linux 实现上。账号、中继、编码与码率协商仍由 UU 自己负责。
-
-<p align="center">
-  <img src="docs/images/video-pipeline.zh.svg" alt="画面链路：像素从合成器到编码器始终留在显存里" width="100%">
-</p>
-
-更多细节见[设计说明](docs/design.md)（英文）。
-
-## 🚀 安装
-
-**准备：**
-
-> Manjaro KDE Wayland：AUR 已发布 `uuway-git`，可用 `yay -S uuway-git` 安装。已在独立 Manjaro KDE 机器上验证源码构建、pacman 安装、首次登录窗口和编码检测；该机器的实际远控测试仍待完成，KDE 支持属于实验性适配。Ubuntu 的 `.deb` 和 `install.sh` 不适用。见 [Manjaro KDE 实验性适配说明](docs/manjaro-kde.md)和 [AUR 原生构建状态及本机软件包版本](docs/aur-manjaro-kde.md)。
-
-**在其他电脑安装这个 fork 的修改版：**请按[跨机器安装说明](docs/install-other-machines.md)从当前源码构建。上游 Releases 的旧包不包含本 fork 的 KDE 采集修复和托盘改动；不要将本机的 UU 登录信息、Wine 前缀或 Portal 授权文件复制到另一台机器。
-
-- Ubuntu 24.04，GNOME 46 **Wayland** 会话，桌面保持登录（没有显示器的主机插一个显示器诱骗器）
-- 支持 NVENC 的 **NVIDIA** 显卡和官方驱动
-- UU 远程官方 **Windows 版**安装包，以及一个 UU 账号
-
-**1. 安装软件包。** 从 [Releases](https://github.com/GaryOAO/UUWay/releases/latest) 下载 `uuway_<版本>_amd64.deb`：
+用 AUR 助手安装：
 
 ```bash
-sudo apt install ./uuway_*_amd64.deb
+yay -S uuway-git
 ```
 
-**2. 运行安装向导**（用普通用户，不要加 sudo）：
+或手动构建：
 
 ```bash
-uuway setup --installer ~/Downloads/UURemote_Setup.exe
+git clone https://aur.archlinux.org/uuway-git.git
+cd uuway-git
+makepkg -si
 ```
 
-向导会依次检查环境、添加并安装 WineHQ stable 11.0（需要 sudo）、授权键鼠注入（需要管理员授权）、把 UU 装进独立的 Wine 前缀、授权屏幕共享，最后写入并启动用户服务。整个过程只有三件事需要你亲手完成：在弹出的 UU 窗口里**登录账号**，在屏幕共享对话框里**选择显示器并勾选「记住」**，以及在随后弹出的文字服务对话框里点**允许**。完成后打开手机上的 UU 远程，设备列表里就会出现这台电脑。
-
-- 向导可以反复运行：已完成的步骤会跳过。`uuway setup --dry-run` 只显示将要执行的命令，`--only 步骤` 只重做某一步。
-- 出问题先运行 `uuway doctor`，它会逐项检查环境和安装状态。
-- 本机操作可从应用菜单打开「UUWay 控制台」，或使用系统托盘中的 UUWay 菜单启动、重启和停止远控。关闭控制台窗口会保留托盘；「停止远控并退出」会断开连接并退出托盘。「退出托盘（保持远控）」只关闭托盘。托盘在桌面登录后自动启动。
-- **只用远程、不常在机器前？** 运行 `uuway autologin on`：开机或断电恢复后 GDM 自动登录你的账号；桌面崩溃或手动注销后，登录界面停留约 10 秒也会自动重新登录，UU 随桌面自动上线（关闭：`uuway autologin off`；想在登录界面停留，先关闭它）。这是安全相关的开关，向导和 `--yes` 都不会替你开启；代价是任何能接触这台机器的人开机就能进入你的桌面，建议配合磁盘加密和自动锁屏。UU 在 GDM 登录界面是离线的，因为 UUWay 的采集和输入都只在你的桌面会话里；这个功能让登录界面只停留十几秒。
-- 向导会把 WineHQ 固定在 11.0 系列（写入 `/etc/apt/preferences.d/uuway-wine`，需要你确认），避免 `apt upgrade` 悄悄升到会让画面采集失效的版本。
-- 如果你使用 Fcitx5，向导会启用手机中文输入所需的插件，需要执行一次 `fcitx5 -r` 才会生效。
-- 升级：`uuway update` 查看有没有新版本，`uuway update install` 下载、校验哈希并安装。装好后它会自动运行 `uuway refresh`，等机器恢复在线并稳定约 90 秒；不正常就自动回滚到更新前的版本。更新期间远程连接会断开几分钟，但更新在后台独立运行，不怕你就在 UU 的远程终端里发起它，重连后用 `uuway update status` 看结果。机器没有开启「崩溃后自动重新登录」（`uuway autologin on`）时，`--yes` 单独不会让它继续。想回到更新前的版本：`uuway update rollback`。
-  `uuway update` 只在你运行它的时候访问 GitHub（`api.github.com` 和 `github.com`），UUWay 不会在后台检查更新，也不会自动安装。更新不会重启文字和显示服务；它们要用新代码时，在空闲时运行 `uuway refresh --restart-services`。
-  **1.2.0 是第一个带更新功能的版本，从 1.1.x 升到 1.2.0 要手动**：`sudo apt install ./uuway_1.2.0_amd64.deb`，再运行 `uuway refresh`（会重启桥接服务，正在进行的远程会话会短暂断开）。
-- 卸载：先 `uuway uninstall`，再 `sudo apt remove uuway`。Wine 前缀（含 UU 登录信息）不会被删除。
-
-> 已在 Ubuntu 24.04 + GNOME 46 Wayland + RTX 3090 + UU 4.42.0.2770 上长期日常使用。其他显卡、驱动和显示器配置还缺少验证，欢迎提交[兼容性报告](https://github.com/GaryOAO/UUWay/issues/new?template=compatibility-report.yml)，成功和失败的都有帮助。
-
-**从源码构建**（开发者）：
+随后在**被控机器已登录的 Plasma Wayland 桌面终端**中，以普通用户运行（不要给 `uuway setup` 加 `sudo`）：
 
 ```bash
-git clone https://github.com/GaryOAO/UUWay.git && cd UUWay
-./install.sh --installer ~/Downloads/UURemote_Setup.exe
+uuway doctor
+uuway setup --installer /path/to/UURemote_Setup.exe
+uuway doctor
 ```
 
-脚本会检查环境、安装依赖和 WineHQ、构建原生运行时并启动服务；中断后用 `./install.sh --from 步骤号` 继续。手动安装、可选的 60 帧帧节奏补丁和排错见[构建与安装指南](docs/build.md)（英文）。
+向导会要求你在 UU 窗口登录、在 KDE 屏幕共享对话框中选择物理显示器并保存授权，以及允许输入/剪贴板授权；系统输入规则可能需要管理员确认。安装包**不包含** UU 安装程序或你的账户数据。不要把另一台机器的 Wine 前缀、登录数据或 Portal 授权文件复制过来。
 
-## 📦 目录结构
+安装后可从应用菜单打开 **UUWay 控制台**，也可从 KDE 托盘启动、重启或停止本机远控；桌面登录时托盘会自动启动。使用 `uuway doctor` 查看本机状态，用 `systemctl --user status uu-native-bridge uu-native-text` 查看服务。AUR 升级由 pacman/AUR 助手完成，随后运行 `uuway refresh`；基于 Ubuntu `.deb`/`apt` 的 `uuway update install` 和 `rollback` **不适用于 Manjaro**。源码版的 `./install.sh` 同样不是 Manjaro 安装入口。
 
-```
-install.sh  从源码构建并安装的脚本
-packaging/  deb 打包、容器内构建与安装测试
-assets/     图标与桌面图片
-src/        原生后端（Linux 侧与 Windows/Wine 侧）及辅助程序
-scripts/    服务、打包、构建、版本审计工具及 Python/GTK 控制台
-patches/    DXVK 采集、Mutter 帧节奏、Portal 会话生命周期补丁
-config/     固定版本的构建依赖与 udev 规则
-systemd/    用户服务模板
-tests/      单元测试与探针
-docs/       设计说明、构建指南、版本审计
+`uuway autologin on` 只处理上游使用的 **GDM**，不会替你配置 KDE 常见的 SDDM。如果需要重启后无人值守上线，请自行评估并配置桌面自动登录的安全风险；停在登录界面时 UUWay 不在线。
+
+### 采集没有画面
+
+屏幕共享授权成功不代表 PipeWire 已送出帧。测试机曾出现仅剩“虚拟输出”、采集无帧的情况；重启 WirePlumber 后声音设备与采集均恢复。**这会中断当前媒体连接**，确认可接受时再执行：
+
+```bash
+systemctl --user restart wireplumber.service
+uuway setup --only portal --force portal
 ```
 
-## ⚖️ 许可证
+再次授权时仍需选择物理屏幕。排错步骤见 [AUR 文档](docs/aur-manjaro-kde.md)。
 
-UUWay 采用 [**GNU AGPL-3.0**](https://github.com/GaryOAO/UUWay/blob/main/LICENSE)。
+## 原理与项目来源
 
-## 免责声明
+UUWay 让 UU 的官方 Windows 被控端继续处理账号、连接与码率协商，同时把桌面画面、编码和输入接到 Linux 原生组件。此 fork 为 Plasma Wayland 增加了 KDE 专用的只读显示模式、原生 AUR 构建与 KDE 托盘适配。更详细的接口与实现见 [设计说明](docs/design.md)和[版本审计](docs/releases/4.42.0.2770-native-review.md)。
 
-UUWay 是独立的非官方项目，与网易无关，也未获得网易的认可。"UU"、"UU 远程"为其各自所有者的商标。UUWay 不分发任何 UU 程序文件，客户端需由你自行从官方渠道安装。
+上游项目：[GaryOAO/UUWay](https://github.com/GaryOAO/UUWay)；更早的设计源自 Lachlan Chen 的 [uu-remote-ubuntu-bridge](https://github.com/lachlanchen/uu-remote-ubuntu-bridge)。感谢原作者及 Wine、DXVK、PipeWire 等项目。Ubuntu/GNOME 用户应查阅上游文档，**不要**把上游 `.deb` 当作本 fork 的 Manjaro 安装包。
 
-## 致谢
-
-UUWay 源于 Lachlan Chen 的 [uu-remote-ubuntu-bridge](https://github.com/lachlanchen/uu-remote-ubuntu-bridge)，并以原生 Wayland 链路取代了其中的 RDP 中继设计。项目同样建立在 [DXVK](https://github.com/doitsujin/dxvk)、[Wine](https://www.winehq.org/)、PipeWire 与 Mutter 之上。
+本仓库的主项目许可证见 [LICENSE](LICENSE)（AGPL-3.0）；随包使用的第三方组件保留各自许可证。本项目与网易无关，不分发 UU 官方程序文件。

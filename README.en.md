@@ -1,177 +1,75 @@
-<div align="center">
+# UUWay for Manjaro KDE
 
-<img src="docs/images/hero.en.svg" alt="UUWay: a native Linux host for NetEase UU Remote" width="100%">
+**A NetEase UU Remote Linux host for Manjaro KDE Plasma Wayland.** This repository adapts [GaryOAO/UUWay](https://github.com/GaryOAO/UUWay) to Manjaro KDE: the official Windows host runs under Wine, while KDE's screen-cast Portal, PipeWire, NVIDIA GPU encoding and native input services connect it to the Linux desktop.
 
-[简体中文](README.md) · [English](README.en.md)
+> This is a **host**, not a viewer. It lets another computer or phone control this Linux machine; it cannot initiate a UU remote-control session to someone else's device. Use an official UU controller on the other device.
 
-![Ubuntu 24.04](https://img.shields.io/badge/Ubuntu-24.04-E95420?logo=ubuntu&logoColor=white)
-![GNOME 46 Wayland](https://img.shields.io/badge/GNOME_46-Wayland-4A86CF?logo=gnome&logoColor=white)
-![NVIDIA NVENC](https://img.shields.io/badge/NVIDIA-NVENC-76B900?logo=nvidia&logoColor=white)
-![Wine 11](https://img.shields.io/badge/Wine-11-A30000)
-![Status](https://img.shields.io/badge/status-stable-22c55e)
-![License AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-0ea5e9)
+[简体中文](README.md) · [KDE adaptation notes](docs/manjaro-kde.md) · [AUR build and test record](docs/aur-manjaro-kde.md)
 
-</div>
+## Status and limits
 
-**NetEase UU Remote only ships a Windows host — there is no Linux client.** UUWay runs the official
-host under Wine, with its files unmodified on disk, and serves every Windows interface it depends on
-from a native Linux implementation. Open UU Remote on your phone and drive your Linux desktop just as
-you would a Windows PC.
+**KDE support is experimental.** On October 14, 2026, an independent Manjaro KDE machine completed an AUR source build, pacman install, UU sign-in, screen and input authorization, and bridge startup. Separate diagnostics captured 2560 × 1600 DMA-BUF frames and successfully encoded and decoded a nonblack H.264 image. `uuway doctor` reported no failures or warnings. **An end-to-end session from another device has not yet been accepted on that machine.** The original workstation displayed the desktop, but black flicker on pointer movement still needs a live retest; audio has also produced harsh noise and is not guaranteed to work.
 
-## ✨ Nearly every UU feature works
+| Feature | Manjaro KDE status |
+| --- | --- |
+| UU host, sign-in and background bridge | Installed and running on the test machine; live viewer test pending |
+| Physical-screen capture and NVIDIA H.264 encoding | Independent capture and encode/decode checks passed |
+| Pointer, keyboard and Chinese IME | Local input services and Fcitx5 add-on running; live viewer test pending |
+| Text clipboard, remote terminal and file transfer | Inherited from upstream; not fully accepted on KDE |
+| Remote resolution/scale changes | KDE profile is read-only; change these in local System Settings |
+| UU Super Screen (Windows virtual monitor) | Unsupported; share the existing physical monitor |
+| Control at the login screen | Unsupported; a logged-in Plasma Wayland session is required |
+| Control someone else's UU device from Linux | Unsupported; UUWay is not a viewer |
 
-| UU feature | On Linux | Notes |
-| --- | :---: | --- |
-| 🎞️ Screen streaming | ✅ | Zero-copy GPU capture + NVENC, up to 60 FPS at 1080p |
-| 🖱️ Pointer | ✅ | The controller draws your real cursor theme, and zoomed views follow it |
-| ⌨️ Keyboard & mouse | ✅ | Including the Super / ⌘ key, injected through libei / uinput |
-| 🀄 Phone IME | ✅ | Chinese text is committed straight into the focused field (Fcitx5) |
-| 🖥️ Resolution · refresh rate · scale | ✅ | Applied to Mutter, rolled back if the new mode never reaches the stream |
-| 💻 **Remote terminal** | ✅ | Opens your Linux login shell; sessions persist and can run side by side |
-| 📋 Clipboard | ✅ | Text in both directions, in real time |
-| 📁 Files: phone → desktop | ✅ | Transferred when you paste; the paste waits for the download |
-| 📁 Files: other device → Linux desktop | ✅ | The receive directory maps to the Linux XDG downloads directory |
-| 📁 Files: desktop → phone | ✅ | Implemented |
-| 🪟 Super Screen (virtual displays) | ❌ | Needs a Windows kernel driver (IddCx) that Wine cannot load |
-| 🔐 GDM login screen | ❌ | It belongs to another system session; UUWay works inside your desktop session. For remote-only use, enable `uuway autologin on`: a crash or a logout returns to the desktop by itself |
-| 📺 1440p / 4K at 60 Hz | ⚠️ | Limited by the refresh rates your display (or dummy plug) advertises |
+The current KDE profile requires **one active, non-mirrored, unrotated physical display**. The Wine Xvfb display runs UU internally; it is not the desktop to share. Choose the real monitor when granting permission. Multiple monitors, virtual displays and headless operation are not verified. See the [KDE adaptation notes](docs/manjaro-kde.md) for prior tests and limitations.
 
-Verified with UU 4.42.0.2770 and no patch at all ([review](docs/releases/4.42.0.2770-native-review.md)).
-UUWay implements public Windows interfaces rather than offsets inside UU, so UU updates rarely matter.
+## Install
 
-### 💻 Highlight: UU's remote terminal opens a Linux shell
+You need a Manjaro/Arch **Plasma Wayland** session, an NVIDIA GPU with NVENC and its driver, multilib enabled, and the official UU Remote **Windows installer**, obtained separately. The AUR build uses the host's pacman CUDA development headers. The verified test machine had CUDA 13.3 and system Wine 11.17. At runtime the package uses a separate SHA-256-verified WineHQ **11.0** under `/opt/uuway/wine-11.0`; it does not replace system Wine because the GPU bridge depends on this private protocol. The build downloads Wine archives and other sources and the installed package takes about 1.5 GB. See the [AUR documentation](docs/aur-manjaro-kde.md) for the full dependency and version boundary.
 
-On Windows, UU's remote terminal opens PowerShell. With UUWay it opens **your Linux login shell**.
-
-- Bytes flow **raw** between the PTY and UU with no console layer in between, so full-screen programs
-  such as vim and htop render correctly and CJK text stays intact.
-- Leave the terminal page and **the session keeps running**; it redraws when you return, and several
-  can run at once.
-- Closing a terminal in UU ends its shell, exactly as on Windows.
-
-## 🔧 How it works
-
-<p align="center">
-  <img src="docs/images/architecture.en.svg" alt="Architecture: every Windows interface the official UU host calls is served by a native Linux implementation" width="100%">
-</p>
-
-UUWay is an **adaptation layer**: UU calls the same APIs it would call on any Windows PC, and each
-call lands on a Linux implementation. UU still handles accounts, relays, and codec and bitrate
-negotiation.
-
-<p align="center">
-  <img src="docs/images/video-pipeline.en.svg" alt="Video path: pixels stay in video memory from compositor to encoder" width="100%">
-</p>
-
-See the [design notes](docs/design.md) for details.
-
-## 🚀 Install
-
-**You need:**
-
-- Ubuntu 24.04 with a GNOME 46 **Wayland** session that stays logged in (a display dummy plug for
-  headless machines)
-- An **NVIDIA** GPU with NVENC and the proprietary driver
-- The official UU Remote **Windows** installer and a UU account
-
-**1. Install the package.** Download `uuway_<version>_amd64.deb` from the
-[latest release](https://github.com/GaryOAO/UUWay/releases/latest):
+Install with an AUR helper:
 
 ```bash
-sudo apt install ./uuway_*_amd64.deb
+yay -S uuway-git
 ```
 
-**2. Run the setup wizard** as your normal user (no sudo):
+Or build manually:
 
 ```bash
-uuway setup --installer ~/Downloads/UURemote_Setup.exe
+git clone https://aur.archlinux.org/uuway-git.git
+cd uuway-git
+makepkg -si
 ```
 
-The wizard checks the system, adds and installs WineHQ stable 11.0 (needs sudo), grants input access
-(needs an administrator prompt), installs UU into its own Wine prefix, grants screen-cast access,
-then writes and starts the user services. Only three things need you: **sign in** in the UU window
-it opens, in the screen-sharing dialog **pick the monitor and tick "remember"**, and click **Allow**
-in the text-service dialog that follows. Then open UU Remote on your phone — this computer is in your
-device list. The wizard's messages are in Chinese.
-
-- The wizard can be run again: finished steps are skipped. `uuway setup --dry-run` only prints what it
-  would run, and `--only STEP` redoes a single step.
-- When something is wrong, run `uuway doctor`; it checks the environment and the installation item by
-  item.
-- **Using it only remotely?** Run `uuway autologin on`: after a reboot or a power cut GDM logs your account in by
-  itself, and after a desktop crash or a manual logout the login screen logs it in again after about 10 seconds, so UU
-  comes back with the desktop (`uuway autologin off` undoes it; turn it off first if you want to stay at the login
-  screen). It is a security setting, so the wizard and `--yes` never turn it on for you; anyone who can reach the
-  machine gets your desktop at boot, so pair it with disk encryption and an automatic screen lock. UU is offline
-  while the GDM login screen is showing, because UUWay's capture and input only exist inside your desktop session;
-  this keeps that window to a few seconds.
-- The wizard pins WineHQ to the 11.0 series (it writes `/etc/apt/preferences.d/uuway-wine`, after you
-  confirm), so that `apt upgrade` cannot move it to a version that breaks screen capture.
-- With Fcitx5, the wizard enables the add-on that phone text input needs; run `fcitx5 -r` once for it
-  to load.
-- Upgrade with `uuway update` (is there a newer release?) and `uuway update install` (download, verify the
-  checksum, install). It then runs `uuway refresh`, waits for the machine to be back online and stable for about
-  90 seconds, and rolls back to the version before the update if it is not. The remote connection drops for a few
-  minutes, but the update runs on its own in the background, so it is safe to start it from UU's own remote
-  terminal; reconnect and run `uuway update status` for the result. If the machine does not log itself back in
-  after a desktop crash (`uuway autologin on`), `--yes` alone will not let it go on. To go back to the version
-  before an update: `uuway update rollback`.
-  `uuway update` contacts GitHub (`api.github.com` and `github.com`) only when you run it; UUWay never checks in
-  the background and never installs anything by itself. An update does not restart the text and display
-  services; when they should run new code, run `uuway refresh --restart-services` while the machine is idle.
-  **1.2.0 is the first release that can update itself, so 1.1.x to 1.2.0 is manual:**
-  `sudo apt install ./uuway_1.2.0_amd64.deb`, then `uuway refresh` (it restarts the bridge service, so a running
-  remote session drops briefly).
-- Uninstall with `uuway uninstall`, then `sudo apt remove uuway`. The Wine prefix, which holds your UU
-  login, is never deleted.
-
-> In daily use on Ubuntu 24.04 + GNOME 46 Wayland + RTX 3090 + UU 4.42.0.2770. Other GPUs, drivers
-> and monitor setups are not verified yet; a
-> [compatibility report](https://github.com/GaryOAO/UUWay/issues/new?template=compatibility-report.yml)
-> helps, whether it works or not.
-
-**Building from source** (developers):
+From a terminal in the **host machine's logged-in Plasma Wayland desktop**, run the wizard as your normal user (no `sudo` on `uuway setup`):
 
 ```bash
-git clone https://github.com/GaryOAO/UUWay.git && cd UUWay
-./install.sh --installer ~/Downloads/UURemote_Setup.exe
+uuway doctor
+uuway setup --installer /path/to/UURemote_Setup.exe
+uuway doctor
 ```
 
-The script checks the system, installs the dependencies and WineHQ, builds the native runtime and starts
-the services; resume with `./install.sh --from STEP`. For a manual install, the optional 60 FPS pacing
-patch and troubleshooting, see the [build and install guide](docs/build.md).
+Sign in in the UU window, select the physical monitor and save permission in KDE's screen-sharing dialog, then allow the separate input/clipboard request. Input rule installation may require administrator confirmation. The package contains **neither** the UU installer nor account data. Never copy a Wine prefix, login data or Portal grant from another machine.
 
-After installation, open **UUWay Console** from the application menu. It uses the bridge's existing
-Python + GTK stack and exposes service capabilities, input, text backend, display modes, the Linux
-penguin desktop image, and the file receive mapping (XDG Downloads by default).
+The **UUWay Console** is available from the application menu. The KDE tray starts at desktop login and can start, restart or stop the local host. Use `uuway doctor` for status or `systemctl --user status uu-native-bridge uu-native-text` for service details. Upgrade with pacman/an AUR helper, then run `uuway refresh`. Ubuntu `.deb`/`apt` commands such as `uuway update install` and `rollback` **do not apply on Manjaro**; the source `./install.sh` is not the Manjaro installer either.
 
-## 📦 Repository layout
+`uuway autologin on` configures upstream's **GDM** only. It does not configure SDDM, commonly used by KDE. If you need unattended availability after reboot, assess the security implications and configure desktop auto-login separately. UUWay is offline at the login screen.
 
-```
-install.sh  build-from-source installer
-packaging/  deb packaging, container build and install tests
-assets/     icons and the desktop image
-src/        native backends (Linux and Windows/Wine sides) and helpers
-scripts/    service, packaging, build, release-audit tooling and Python/GTK console
-patches/    DXVK capture, Mutter pacing, portal session-lifetime patches
-config/     pinned build inputs and the udev rule
-systemd/    user service templates
-tests/      unit tests and probes
-docs/       design notes, build guide, release reviews
+### Screen capture delivers no frames
+
+A successful screen-sharing grant does not prove PipeWire is delivering frames. On the test machine, only a dummy audio output remained and capture stopped delivering frames. Restarting WirePlumber restored real audio devices and capture. **This interrupts active media connections**; run it only when appropriate:
+
+```bash
+systemctl --user restart wireplumber.service
+uuway setup --only portal --force portal
 ```
 
-## ⚖️ License
+Choose the physical monitor again if asked. See the [AUR troubleshooting notes](docs/aur-manjaro-kde.md).
 
-UUWay is licensed under [**GNU AGPL-3.0**](https://github.com/GaryOAO/UUWay/blob/main/LICENSE).
+## Design and credits
 
-## Disclaimer
+UU's official Windows host continues to handle accounts, connections and bitrate negotiation. UUWay connects desktop capture, encoding and input to native Linux components. This fork adds a Plasma Wayland read-only display profile, an Arch-native AUR build and KDE tray integration. See the [design notes](docs/design.md) and [version review](docs/releases/4.42.0.2770-native-review.md).
 
-UUWay is an independent, unofficial project. It is not affiliated with or endorsed by NetEase.
-"UU" and "UU Remote" are trademarks of their respective owners. UUWay distributes no UU program
-files; you install the client yourself from the official source.
+Upstream: [GaryOAO/UUWay](https://github.com/GaryOAO/UUWay); earlier work: Lachlan Chen's [uu-remote-ubuntu-bridge](https://github.com/lachlanchen/uu-remote-ubuntu-bridge). Thanks to the original authors and to Wine, DXVK, PipeWire and their contributors. Ubuntu/GNOME users should follow the upstream instructions, **not** install an upstream `.deb` as this fork's Manjaro package.
 
-## Acknowledgements
-
-UUWay grew out of [uu-remote-ubuntu-bridge](https://github.com/lachlanchen/uu-remote-ubuntu-bridge)
-by Lachlan Chen, whose RDP-relay design it replaces with a native Wayland pipeline. It also builds
-on [DXVK](https://github.com/doitsujin/dxvk), [Wine](https://www.winehq.org/), PipeWire and Mutter.
+The main project license is [AGPL-3.0](LICENSE); bundled third-party components retain their own licenses. This unofficial project is not affiliated with NetEase and does not distribute the official UU software.
