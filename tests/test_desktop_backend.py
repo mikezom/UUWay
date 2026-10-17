@@ -1,9 +1,11 @@
 """Read-only Plasma topology and service policy checks."""
 import importlib.util
+import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('desktop_backend', ROOT / 'scripts/desktop_backend.py')
@@ -19,6 +21,21 @@ def fixture():
 
 
 class PlasmaTests(unittest.TestCase):
+    def test_topology_query_does_not_register_accessibility_clients(self):
+        previous = os.environ.get('QT_LINUX_ACCESSIBILITY_ALWAYS_ON')
+        with patch.dict(os.environ, {'QT_LINUX_ACCESSIBILITY_ALWAYS_ON': '1',
+                                     'QT_ACCESSIBILITY': '1', 'NO_AT_BRIDGE': '0',
+                                     'WAYLAND_DISPLAY': 'wayland-0'}), \
+                patch.object(backend.subprocess, 'run', return_value=Mock(stdout=json.dumps(fixture()))) as run:
+            self.assertEqual(backend.current_plasma_topology()['connectors'], ['eDP-1'])
+        args, kwargs = run.call_args
+        self.assertEqual(args[0], ['kscreen-doctor', '-j'])
+        self.assertEqual(kwargs['env']['QT_LINUX_ACCESSIBILITY_ALWAYS_ON'], '0')
+        self.assertEqual(kwargs['env']['QT_ACCESSIBILITY'], '0')
+        self.assertEqual(kwargs['env']['NO_AT_BRIDGE'], '1')
+        self.assertEqual(kwargs['env']['WAYLAND_DISPLAY'], 'wayland-0')
+        self.assertEqual(os.environ.get('QT_LINUX_ACCESSIBILITY_ALWAYS_ON'), previous)
+
     def test_user_wine_is_used_only_when_system_wine_is_absent(self):
         with tempfile.TemporaryDirectory() as directory:
             system, local = Path(directory) / 'system', Path(directory) / 'local'

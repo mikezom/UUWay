@@ -57,6 +57,10 @@ def plasma_topology(data):
 
 
 def current_plasma_topology():
+    # Screen geometry queries do not need AT-SPI. Avoid registering a new
+    # short-lived accessible application on every topology poll.
+    environment = dict(os.environ, QT_LINUX_ACCESSIBILITY_ALWAYS_ON='0',
+                       QT_ACCESSIBILITY='0', NO_AT_BRIDGE='1')
     result = subprocess.run(['kscreen-doctor', '-j'], capture_output=True, text=True,
-                            timeout=5, check=True)
+                            timeout=5, check=True, env=environment)
     return plasma_topology(json.loads(result.stdout))
