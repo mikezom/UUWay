@@ -299,7 +299,8 @@ static BOOL input_to_x11_event(const INPUT *input,
         scan = input->ki.wScan;
     } else {
         mapped = MapVirtualKeyW(input->ki.wVk, MAPVK_VK_TO_VSC_EX);
-        if (mapped == 0 && !(native_only && (input->ki.wVk == VK_LWIN || input->ki.wVk == VK_RWIN)))
+        /* Native keypad/logo normalization can recover missing Wine maps. */
+        if (mapped == 0 && !native_only)
             return FALSE;
         scan = (WORD)(mapped & 0xffU);
         if ((mapped & 0xff00U) == 0xe000U)

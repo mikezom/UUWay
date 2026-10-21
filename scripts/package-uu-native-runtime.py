@@ -515,6 +515,7 @@ REPLACEABLE_COMPONENTS = (
     CAPTURE_BACKEND_COMPONENT,
     'capture/uu-pipewire-native-probe',
     'runtime/uu-native-input',
+    'runtime/native-input-broker.exe',
     'runtime/bootstrap.exe',
 )
 

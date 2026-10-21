@@ -181,6 +181,25 @@ class PackageIsolationTests(unittest.TestCase):
                 package.verify(base)
                 package.verify(updated)
 
+    def test_broker_update_preserves_other_native_components(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); self.fixture(root)
+            with patch.object(package, 'ROOT', root):
+                base = Path(package.package(root / 'releases', with_input=True)['bundle'])
+                component = 'runtime/native-input-broker.exe'
+                replacement = root / 'broker-fixed.exe'
+                replacement.write_bytes(b'broker-with-native-keypad-mapping')
+                updated = Path(package.package(root / 'releases', with_input=True,
+                    reuse_runtime_from=base, replace_components={component: replacement})['bundle'])
+                self.assertNotEqual(updated, base)
+                self.assertEqual((updated / component).read_bytes(), replacement.read_bytes())
+                self.assertNotEqual((base / component).read_bytes(), replacement.read_bytes())
+                for name in dict(package.INPUTS, **package.INPUT_RUNTIME, **package.PINNED_CAPTURE):
+                    if name != component:
+                        self.assertEqual((updated / name).read_bytes(), (base / name).read_bytes(), name)
+                package.verify(base)
+                package.verify(updated)
+
     def test_schema32_33_and_erroneous_schema34_are_accepted_as_legacy(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); self.fixture(root)
