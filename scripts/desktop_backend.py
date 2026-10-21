@@ -57,10 +57,12 @@ def plasma_topology(data):
 
 
 def current_plasma_topology():
-    # Screen geometry queries do not need AT-SPI. Avoid registering a new
-    # short-lived accessible application on every topology poll.
-    environment = dict(os.environ, QT_LINUX_ACCESSIBILITY_ALWAYS_ON='0',
-                       QT_ACCESSIBILITY='0', NO_AT_BRIDGE='1')
+    # Qt checks whether ALWAYS_ON is present, so even '0' forces AT-SPI on.
+    # An explicit bus address also bypasses desktop policy. Remove both only
+    # from this short-lived geometry helper, leaving the parent unchanged.
+    environment = dict(os.environ, QT_ACCESSIBILITY='0', NO_AT_BRIDGE='1')
+    environment.pop('QT_LINUX_ACCESSIBILITY_ALWAYS_ON', None)
+    environment.pop('AT_SPI_BUS_ADDRESS', None)
     result = subprocess.run(['kscreen-doctor', '-j'], capture_output=True, text=True,
                             timeout=5, check=True, env=environment)
     return plasma_topology(json.loads(result.stdout))

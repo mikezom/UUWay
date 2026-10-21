@@ -218,3 +218,21 @@ remote session; a failed stop keeps the tray available. Tray-only exit leaves
 the bridge running. The tray was started locally without restarting the bridge,
 and KDE's StatusNotifierWatcher and DBusMenu reported the UUWay item and all
 expected enabled/disabled menu actions.
+
+## Topology polling and accessibility
+
+The KDE topology helper removes `QT_LINUX_ACCESSIBILITY_ALWAYS_ON` and
+`AT_SPI_BUS_ADDRESS` from its child environment. Qt treats the first variable as
+force-enabled whenever it exists, including when its value is `0`; an explicit
+bus address also forces a connection. Geometry queries should follow the desktop's
+accessibility policy. The parent environment and desktop settings are preserved.
+
+The opt-in regression below runs real read-only geometry queries and observes
+only accessibility connection metadata. It includes a forced-registration
+positive control, then checks that regular topology queries return the same
+geometry without registering accessibility clients. It requires a live Plasma
+Wayland session with desktop accessibility disabled and does not change that policy.
+
+```bash
+UUWAY_LIVE_DESKTOP_TESTS=1 /usr/bin/python3 -m unittest tests.test_desktop_backend_live -v
+```

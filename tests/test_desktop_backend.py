@@ -21,20 +21,28 @@ def fixture():
 
 
 class PlasmaTests(unittest.TestCase):
-    def test_topology_query_does_not_register_accessibility_clients(self):
-        previous = os.environ.get('QT_LINUX_ACCESSIBILITY_ALWAYS_ON')
-        with patch.dict(os.environ, {'QT_LINUX_ACCESSIBILITY_ALWAYS_ON': '1',
-                                     'QT_ACCESSIBILITY': '1', 'NO_AT_BRIDGE': '0',
-                                     'WAYLAND_DISPLAY': 'wayland-0'}), \
-                patch.object(backend.subprocess, 'run', return_value=Mock(stdout=json.dumps(fixture()))) as run:
-            self.assertEqual(backend.current_plasma_topology()['connectors'], ['eDP-1'])
-        args, kwargs = run.call_args
-        self.assertEqual(args[0], ['kscreen-doctor', '-j'])
-        self.assertEqual(kwargs['env']['QT_LINUX_ACCESSIBILITY_ALWAYS_ON'], '0')
-        self.assertEqual(kwargs['env']['QT_ACCESSIBILITY'], '0')
-        self.assertEqual(kwargs['env']['NO_AT_BRIDGE'], '1')
-        self.assertEqual(kwargs['env']['WAYLAND_DISPLAY'], 'wayland-0')
-        self.assertEqual(os.environ.get('QT_LINUX_ACCESSIBILITY_ALWAYS_ON'), previous)
+    def test_topology_query_does_not_force_accessibility_or_change_parent_environment(self):
+        for forced in (None, '', '0', '1'):
+            environment = dict(QT_ACCESSIBILITY='1', NO_AT_BRIDGE='0',
+                               AT_SPI_BUS_ADDRESS='unix:path=/fixture/accessibility-bus',
+                               WAYLAND_DISPLAY='wayland-0',
+                               DBUS_SESSION_BUS_ADDRESS='unix:path=/fixture/session-bus')
+            if forced is not None:
+                environment['QT_LINUX_ACCESSIBILITY_ALWAYS_ON'] = forced
+            with self.subTest(forced=forced), patch.dict(os.environ, environment, clear=True), \
+                    patch.object(backend.subprocess, 'run',
+                                 return_value=Mock(stdout=json.dumps(fixture()))) as run:
+                before = dict(os.environ)
+                self.assertEqual(backend.current_plasma_topology()['connectors'], ['eDP-1'])
+                args, kwargs = run.call_args
+                self.assertEqual(args[0], ['kscreen-doctor', '-j'])
+                self.assertNotIn('QT_LINUX_ACCESSIBILITY_ALWAYS_ON', kwargs['env'])
+                self.assertNotIn('AT_SPI_BUS_ADDRESS', kwargs['env'])
+                self.assertEqual(kwargs['env']['QT_ACCESSIBILITY'], '0')
+                self.assertEqual(kwargs['env']['NO_AT_BRIDGE'], '1')
+                self.assertEqual(kwargs['env']['WAYLAND_DISPLAY'], environment['WAYLAND_DISPLAY'])
+                self.assertEqual(kwargs['env']['DBUS_SESSION_BUS_ADDRESS'], environment['DBUS_SESSION_BUS_ADDRESS'])
+                self.assertEqual(dict(os.environ), before)
 
     def test_user_wine_is_used_only_when_system_wine_is_absent(self):
         with tempfile.TemporaryDirectory() as directory:
