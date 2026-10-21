@@ -28,6 +28,7 @@ pkgbase = uuway-git
 	depends = json-c
 	depends = libx11
 	depends = libxfixes
+	depends = wayland
 	depends = fcitx5
 	depends = python
 	depends = python-gobject

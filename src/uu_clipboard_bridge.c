@@ -2,8 +2,10 @@
  *
  * The native service runs UU under its own Xvfb, so Wine's clipboard (and
  * with it UU's phone clipboard sync) lives on that display, while desktop
- * applications use Xwayland, whose CLIPBOARD Mutter keeps in step with the
- * Wayland clipboard. Watch CLIPBOARD ownership on both with XFixes; when one
+ * applications use the native Wayland clipboard. On KDE, listen directly
+ * through ext-data-control-v1: KWin exposes native copies to Xwayland only
+ * while an X11 window is focused. XFixes remains the fallback for other
+ * compositors and the outgoing path to the desktop. When either
  * side gets a new owner, fetch the formats this bridge understands (UTF-8
  * text, file lists and PNG images) and offer them on the other side. Wine
  * converts file lists to CF_HDROP and PNG to bitmaps for UU.
@@ -38,6 +40,8 @@
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
 #include <X11/extensions/Xfixes.h>
+#include <wayland-client.h>
+#include "ext-data-control-v1-client.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -64,6 +68,7 @@
 #define TRANSFER_TIMEOUT_MS 5000
 #define RETRY_SECONDS 2
 #define WINE_WAKE_MS 250
+#define MAX_WAYLAND_MIMES 256
 
 /* Targets copied between displays, by name; atoms differ per display. */
 static const char *const copied_targets[] = {
@@ -74,6 +79,7 @@ static const char *const copied_targets[] = {
 /* The native text service owns the desktop clipboard for a moment to paste
  * phone text and marks that selection with this target. It is not a copy. */
 #define TRANSIENT_TARGET "application/x-uurb-transient"
+#define BRIDGE_TARGET "application/x-uurb-clipboard-bridge"
 
 /* Phone files are saved in full before the desktop can paste them. */
 #define MAX_SAVED_FILE_BYTES "1073741824"
@@ -82,6 +88,25 @@ struct format {
     char name[48];
     unsigned char *data;
     size_t size;
+};
+
+struct wayland_offer {
+    struct ext_data_control_offer_v1 *proxy;
+    char mime_types[MAX_WAYLAND_MIMES][96];
+    int mime_count;
+};
+
+struct wayland_clipboard {
+    struct wl_display *display;
+    struct wl_registry *registry;
+    struct wl_seat *seat;
+    struct ext_data_control_manager_v1 *manager;
+    struct ext_data_control_device_v1 *device;
+    struct wayland_offer *offer;
+    struct side *desktop;
+    uint64_t generation;
+    uint32_t seat_name, manager_name;
+    int ready, failed;
 };
 
 struct side {
@@ -103,6 +128,7 @@ struct side {
     uint64_t holds;
     /* The newest owner change not yet copied; a later one replaces it. */
     int pending;
+    int pending_native;
     Window pending_owner;
     Time pending_time;
     int64_t pending_ms;
@@ -130,6 +156,150 @@ static struct {
     int deferred_count;
 } files;
 static int64_t saved_files_keep_ms = 10 * 60 * 1000;
+static struct wayland_clipboard wayland_clipboard;
+static int64_t now_ms(void);
+
+static void wayland_offer_mime(void *data, struct ext_data_control_offer_v1 *offer,
+                               const char *mime_type)
+{
+    struct wayland_offer *record = data;
+
+    (void)offer;
+    if (record->mime_count < MAX_WAYLAND_MIMES && strlen(mime_type) < sizeof(record->mime_types[0]))
+        snprintf(record->mime_types[record->mime_count++], sizeof(record->mime_types[0]), "%s", mime_type);
+}
+
+static const struct ext_data_control_offer_v1_listener wayland_offer_listener = {
+    .offer = wayland_offer_mime,
+};
+
+static void wayland_data_offer(void *data, struct ext_data_control_device_v1 *device,
+                               struct ext_data_control_offer_v1 *offer)
+{
+    struct wayland_clipboard *clipboard = data;
+    struct wayland_offer *record = calloc(1, sizeof(*record));
+
+    (void)device;
+    if (record == NULL) {
+        clipboard->failed = 1;
+        ext_data_control_offer_v1_destroy(offer);
+        return;
+    }
+    record->proxy = offer;
+    ext_data_control_offer_v1_add_listener(offer, &wayland_offer_listener, record);
+}
+
+static void destroy_wayland_offer(struct wayland_offer *offer)
+{
+    if (offer != NULL) {
+        ext_data_control_offer_v1_destroy(offer->proxy);
+        free(offer);
+    }
+}
+
+static void wayland_selection(void *data, struct ext_data_control_device_v1 *device,
+                              struct ext_data_control_offer_v1 *offer)
+{
+    struct wayland_clipboard *clipboard = data;
+    struct side *desktop = clipboard->desktop;
+
+    (void)device;
+    destroy_wayland_offer(clipboard->offer);
+    clipboard->offer = offer != NULL ? ext_data_control_offer_v1_get_user_data(offer) : NULL;
+    clipboard->generation++;
+    desktop->pending_native = 1;
+    desktop->pending = offer != NULL;
+    desktop->pending_owner = None;
+    desktop->pending_time = CurrentTime;
+    desktop->pending_ms = now_ms();
+    if (offer == NULL)
+        desktop->holds = 0;
+}
+
+static void wayland_finished(void *data, struct ext_data_control_device_v1 *device)
+{
+    struct wayland_clipboard *clipboard = data;
+
+    clipboard->failed = 1;
+    (void)device;
+}
+
+static void wayland_primary_selection(void *data, struct ext_data_control_device_v1 *device,
+                                     struct ext_data_control_offer_v1 *offer)
+{
+    (void)data;
+    (void)device;
+    if (offer != NULL)
+        destroy_wayland_offer(ext_data_control_offer_v1_get_user_data(offer));
+}
+
+static const struct ext_data_control_device_v1_listener wayland_device_listener = {
+    .data_offer = wayland_data_offer,
+    .selection = wayland_selection,
+    .finished = wayland_finished,
+    .primary_selection = wayland_primary_selection,
+};
+
+static void wayland_global(void *data, struct wl_registry *registry, uint32_t name,
+                           const char *interface, uint32_t version)
+{
+    struct wayland_clipboard *clipboard = data;
+
+    (void)version;
+    if (strcmp(interface, wl_seat_interface.name) == 0 && clipboard->seat == NULL) {
+        clipboard->seat_name = name;
+        clipboard->seat = wl_registry_bind(registry, name, &wl_seat_interface, 1);
+    } else if (strcmp(interface, ext_data_control_manager_v1_interface.name) == 0 &&
+             clipboard->manager == NULL) {
+        clipboard->manager_name = name;
+        clipboard->manager = wl_registry_bind(registry, name,
+            &ext_data_control_manager_v1_interface, 1);
+    }
+}
+
+static void wayland_global_remove(void *data, struct wl_registry *registry, uint32_t name)
+{
+    struct wayland_clipboard *clipboard = data;
+
+    (void)registry;
+    if (name == clipboard->seat_name || name == clipboard->manager_name)
+        clipboard->failed = 1;
+}
+
+static const struct wl_registry_listener wayland_registry_listener = {
+    .global = wayland_global,
+    .global_remove = wayland_global_remove,
+};
+
+static int open_wayland_clipboard(struct side *desktop)
+{
+    struct wayland_clipboard *clipboard = &wayland_clipboard;
+
+    if (getenv("UURB_CLIPBOARD_WAYLAND") != NULL &&
+        strcmp(getenv("UURB_CLIPBOARD_WAYLAND"), "0") == 0)
+        return 0;
+    clipboard->display = wl_display_connect(NULL);
+    if (clipboard->display == NULL)
+        return 0;
+    clipboard->registry = wl_display_get_registry(clipboard->display);
+    clipboard->desktop = desktop;
+    wl_registry_add_listener(clipboard->registry, &wayland_registry_listener, clipboard);
+    if (wl_display_roundtrip(clipboard->display) < 0 || clipboard->manager == NULL ||
+        clipboard->seat == NULL)
+        goto unavailable;
+    clipboard->device = ext_data_control_manager_v1_get_data_device(clipboard->manager,
+                                                                    clipboard->seat);
+    ext_data_control_device_v1_add_listener(clipboard->device, &wayland_device_listener, clipboard);
+    if (wl_display_roundtrip(clipboard->display) < 0 || clipboard->failed)
+        goto unavailable;
+    clipboard->ready = 1;
+    return 1;
+
+unavailable:
+    wl_display_disconnect(clipboard->display);
+    memset(clipboard, 0, sizeof(*clipboard));
+    return 0;
+}
 
 static void start_download(void);
 static void retire_files(void);
@@ -343,7 +513,7 @@ static void answer_request(struct side *side, XSelectionRequestEvent *request)
     reply.property = None;
     if (!refuse && request->selection == side->clipboard && side->format_count > 0) {
         if (request->target == side->targets) {
-            Atom offered[MAX_FORMATS + 3];
+            Atom offered[MAX_FORMATS + 4];
             int count = 0;
 
             offered[count++] = side->targets;
@@ -352,6 +522,8 @@ static void answer_request(struct side *side, XSelectionRequestEvent *request)
                 offered[count++] = XInternAtom(display, side->formats[index].name, False);
             if (find_format_in(side->formats, side->format_count, "UTF8_STRING"))
                 offered[count++] = XInternAtom(display, "text/plain;charset=utf-8", False);
+            if (wayland_clipboard.ready && side == wayland_clipboard.desktop)
+                offered[count++] = XInternAtom(display, BRIDGE_TARGET, False);
             XChangeProperty(display, request->requestor, property, XA_ATOM, 32,
                             PropModeReplace, (unsigned char *)offered, count);
             reply.property = property;
@@ -366,7 +538,12 @@ static void answer_request(struct side *side, XSelectionRequestEvent *request)
                 side->formats, side->format_count,
                 strcmp(name, "text/plain;charset=utf-8") == 0 ? "UTF8_STRING" : name);
 
-            if (format != NULL) {
+            if (strcmp(name, BRIDGE_TARGET) == 0 && wayland_clipboard.ready &&
+                side == wayland_clipboard.desktop) {
+                XChangeProperty(display, request->requestor, property, request->target, 8,
+                                PropModeReplace, (unsigned char *)"", 0);
+                reply.property = property;
+            } else if (format != NULL) {
                 XChangeProperty(display, request->requestor, property, request->target, 8,
                                 PropModeReplace, format->data, (int)format->size);
                 reply.property = property;
@@ -387,8 +564,10 @@ static void service_event(struct side *side, XEvent *event)
 
         if (notify->owner == side->window) {
             side->owned_since = notify->selection_timestamp;
-        } else if (notify->owner != None) {
+        } else if (notify->owner != None &&
+                   !(wayland_clipboard.ready && side == wayland_clipboard.desktop)) {
             side->pending = 1;
+            side->pending_native = 0;
             side->pending_owner = notify->owner;
             side->pending_time = notify->selection_timestamp;
             side->pending_ms = now_ms();
@@ -402,14 +581,56 @@ static void service_event(struct side *side, XEvent *event)
     }
 }
 
+/* One balanced Wayland prepare/read pair per poll, including while waiting
+ * for an X selection or a native data pipe. Both X displays stay serviced. */
+static int poll_sides(struct side *side, int extra_fd, int timeout)
+{
+    struct wayland_clipboard *clipboard = &wayland_clipboard;
+    struct pollfd descriptors[4] = {
+        {.fd = ConnectionNumber(side->display), .events = POLLIN},
+        {.fd = ConnectionNumber(side->other->display), .events = POLLIN},
+        {.fd = extra_fd, .events = POLLIN},
+        {.fd = -1, .events = POLLIN},
+    };
+    int result;
+    uint64_t generation = clipboard->generation;
+
+    if (clipboard->ready) {
+        while (wl_display_prepare_read(clipboard->display) != 0)
+            if (wl_display_dispatch_pending(clipboard->display) < 0)
+                return -1;
+        descriptors[3].fd = wl_display_get_fd(clipboard->display);
+        if (wl_display_flush(clipboard->display) < 0 && errno == EAGAIN)
+            descriptors[3].events |= POLLOUT;
+        if (generation != clipboard->generation)
+            timeout = 0;
+    }
+    result = poll(descriptors, 4, timeout);
+    if (clipboard->ready) {
+        if (result > 0 && (descriptors[3].revents & POLLIN)) {
+            if (wl_display_read_events(clipboard->display) < 0)
+                return -1;
+        } else {
+            wl_display_cancel_read(clipboard->display);
+        }
+    }
+    for (int index = 0; index < 4; index++)
+        if (index != 2 && descriptors[index].revents & (POLLERR | POLLHUP | POLLNVAL))
+            return -1;
+    return result < 0 && errno != EINTR ? -1 : 0;
+}
+
 /* Serve both displays until `side`'s window gets an event of `type`. */
 static int wait_event(struct side *side, int type, XEvent *event, int64_t deadline)
 {
     struct side *sides[2] = {side, side->other};
 
     while (!stop_requested) {
-        struct pollfd descriptors[2];
         int64_t remaining;
+
+        if (wayland_clipboard.ready &&
+            wl_display_dispatch_pending(wayland_clipboard.display) < 0)
+            return 0;
 
         for (int index = 0; index < 2; index++) {
             while (XPending(sides[index]->display)) {
@@ -422,10 +643,8 @@ static int wait_event(struct side *side, int type, XEvent *event, int64_t deadli
         remaining = deadline - now_ms();
         if (remaining <= 0)
             return 0;
-        for (int index = 0; index < 2; index++)
-            descriptors[index] = (struct pollfd){.fd = ConnectionNumber(sides[index]->display),
-                                                 .events = POLLIN};
-        poll(descriptors, 2, (int)remaining);
+        if (poll_sides(side, -1, (int)remaining) < 0)
+            return 0;
     }
     return 0;
 }
@@ -993,6 +1212,11 @@ static void tend_files(void)
     }
 }
 
+static int wayland_target_names(char names[][48], int maximum);
+static const char *wayland_mime_for_target(const char *target);
+static unsigned char *receive_wayland_data(struct side *source, const char *target,
+                                           uint64_t generation, size_t *size);
+
 /* Copy the newest owner change of `source` to the other side. */
 static void copy_change(struct side *source)
 {
@@ -1004,12 +1228,16 @@ static void copy_change(struct side *source)
     struct format formats[MAX_FORMATS];
     int available, count = 0;
     uint64_t digest;
+    int native = source->pending_native;
+    uint64_t generation = wayland_clipboard.generation;
 
     source->pending = 0;
+    if (native && wayland_mime_for_target(BRIDGE_TARGET) != NULL)
+        return;
     /* This change is newer than any queued on the other side. */
     if (target->pending && target->pending_ms <= changed_ms)
         target->pending = 0;
-    available = fetch_target_names(source, when, names, 256);
+    available = native ? wayland_target_names(names, 256) : fetch_target_names(source, when, names, 256);
     for (int index = 0; index < available; index++) {
         if (strcmp(names[index], TRANSIENT_TARGET) == 0) {
             log_line("transient on %s owner=0x%lx", source->label, owner);
@@ -1025,8 +1253,8 @@ static void copy_change(struct side *source)
         /* Some owners answer no TARGETS; text is still worth asking for. */
         if (!present && !(available == 0 && wanted == 0))
             continue;
-        formats[count].data = fetch_target(source, when, XInternAtom(source->display, name, False),
-                                           &formats[count].size);
+        formats[count].data = native ? receive_wayland_data(source, name, generation, &formats[count].size)
+            : fetch_target(source, when, XInternAtom(source->display, name, False), &formats[count].size);
         if (formats[count].data == NULL)
             continue;
         strcpy(formats[count].name, name);
@@ -1044,6 +1272,10 @@ static void copy_change(struct side *source)
         formats[count] = uris_from_copied_files(
             find_format_in(formats, count, "x-special/gnome-copied-files"));
         count++;
+    }
+    if (native && generation != wayland_clipboard.generation) {
+        free_formats(formats, count);
+        return;
     }
     if (count == 0) {
         source->holds = 0;
@@ -1083,6 +1315,111 @@ static void copy_change(struct side *source)
              "ms since-offer=%" PRId64 "ms",
              source->label, target->label, owner, (uint32_t)digest, sizes, now_ms() - changed_ms,
              source->offered_ms ? changed_ms - source->offered_ms : -1);
+}
+
+static const char *wayland_mime_for_target(const char *target)
+{
+    struct wayland_offer *offer = wayland_clipboard.offer;
+    static const char *const text_mimes[] = {
+        "text/plain;charset=utf-8", "text/plain;charset=UTF-8", "UTF8_STRING", "text/plain",
+    };
+
+    if (offer == NULL)
+        return NULL;
+    if (strcmp(target, "UTF8_STRING") == 0) {
+        for (size_t wanted = 0; wanted < sizeof(text_mimes) / sizeof(text_mimes[0]); wanted++)
+            for (int index = 0; index < offer->mime_count; index++)
+                if (strcmp(offer->mime_types[index], text_mimes[wanted]) == 0)
+                    return text_mimes[wanted];
+    } else {
+        for (int index = 0; index < offer->mime_count; index++)
+            if (strcmp(offer->mime_types[index], target) == 0)
+                return offer->mime_types[index];
+    }
+    return NULL;
+}
+
+static int wayland_target_names(char names[][48], int maximum)
+{
+    int count = 0;
+
+    if (maximum > 0 && wayland_mime_for_target(TRANSIENT_TARGET) != NULL) {
+        strcpy(names[count++], TRANSIENT_TARGET);
+        return count;
+    }
+    for (size_t index = 0; index < sizeof(copied_targets) / sizeof(copied_targets[0]); index++)
+        if (count < maximum && wayland_mime_for_target(copied_targets[index]) != NULL)
+            strcpy(names[count++], copied_targets[index]);
+    return count;
+}
+
+static unsigned char *receive_wayland_data(struct side *source, const char *target,
+                                           uint64_t generation, size_t *size)
+{
+    struct wayland_clipboard *clipboard = &wayland_clipboard;
+    const char *mime = wayland_mime_for_target(target);
+    int descriptors[2];
+    unsigned char *data = NULL;
+    size_t used = 0, capacity = 0;
+    int64_t deadline = now_ms() + TRANSFER_TIMEOUT_MS;
+
+    if (mime == NULL || generation != clipboard->generation || pipe2(descriptors, O_CLOEXEC) != 0)
+        return NULL;
+    fcntl(descriptors[0], F_SETFL, O_NONBLOCK);
+    ext_data_control_offer_v1_receive(clipboard->offer->proxy, mime, descriptors[1]);
+    close(descriptors[1]);
+    wl_display_flush(clipboard->display);
+    while (!stop_requested) {
+        struct side *sides[2] = {source, source->other};
+        unsigned char chunk[16384];
+        int64_t remaining;
+        ssize_t count;
+
+        if (wl_display_dispatch_pending(clipboard->display) < 0 || clipboard->failed ||
+            generation != clipboard->generation)
+            break;
+        for (int index = 0; index < 2; index++) {
+            XEvent event;
+            while (XPending(sides[index]->display)) {
+                XNextEvent(sides[index]->display, &event);
+                service_event(sides[index], &event);
+            }
+        }
+        count = read(descriptors[0], chunk, sizeof(chunk));
+        if (count == 0) {
+            *size = used;
+            close(descriptors[0]);
+            return data != NULL ? data : calloc(1, 1);
+        }
+        if (count < 0 && errno == EINTR)
+            continue;
+        if (count < 0 && errno == EAGAIN) {
+            remaining = deadline - now_ms();
+            if (remaining <= 0 || poll_sides(source, descriptors[0], (int)remaining) < 0)
+                break;
+            continue;
+        }
+        if (count < 0)
+            break;
+        if (used + (size_t)count > MAX_FORMAT_BYTES)
+            break;
+        if (used + (size_t)count > capacity) {
+            size_t grown = capacity == 0 ? sizeof(chunk) : capacity * 2;
+            unsigned char *next;
+            while (grown < used + (size_t)count)
+                grown *= 2;
+            next = realloc(data, grown);
+            if (next == NULL)
+                break;
+            data = next;
+            capacity = grown;
+        }
+        memcpy(data + used, chunk, (size_t)count);
+        used += (size_t)count;
+    }
+    close(descriptors[0]);
+    free(data);
+    return NULL;
 }
 
 /* Wake every Wine thread on UU's display so pending X requests go out. */
@@ -1130,15 +1467,15 @@ static int run_bridge(const char *uu_display, const char *desktop_display)
         return 4;
     }
     log_line("bridge connected uu=%s desktop=%s", uu.display_name, desktop.display_name);
+    if (open_wayland_clipboard(&desktop))
+        log_line("native Wayland clipboard connected");
+    else
+        log_line("native Wayland clipboard unavailable; using Xwayland only");
     if (saved_files_root(root, sizeof(root)))
         remove_tree(root);
     if (getenv("UURB_CLIPBOARD_KEEP_SECONDS") != NULL)
         saved_files_keep_ms = atoll(getenv("UURB_CLIPBOARD_KEEP_SECONDS")) * 1000;
     while (!stop_requested) {
-        struct pollfd descriptors[2] = {
-            {.fd = ConnectionNumber(uu.display), .events = POLLIN},
-            {.fd = ConnectionNumber(desktop.display), .events = POLLIN},
-        };
         struct side *newest;
         XEvent event;
         int64_t now = now_ms();
@@ -1155,6 +1492,9 @@ static int run_bridge(const char *uu_display, const char *desktop_display)
             XNextEvent(desktop.display, &event);
             service_event(&desktop, &event);
         }
+        if (wayland_clipboard.ready && (wayland_clipboard.failed ||
+            wl_display_dispatch_pending(wayland_clipboard.display) < 0))
+            return 6;
         tend_files();
         newest = uu.pending && (!desktop.pending || uu.pending_ms >= desktop.pending_ms) ? &uu
                  : desktop.pending ? &desktop : NULL;
@@ -1166,10 +1506,8 @@ static int run_bridge(const char *uu_display, const char *desktop_display)
         if (XEventsQueued(uu.display, QueuedAlready) || XEventsQueued(desktop.display, QueuedAlready))
             continue;
         now = now_ms();
-        if (poll(descriptors, 2, next_wake > now ? (int)(next_wake - now) : 0) < 0 && errno != EINTR)
+        if (poll_sides(&uu, -1, next_wake > now ? (int)(next_wake - now) : 0) < 0)
             return 5;
-        if ((descriptors[0].revents | descriptors[1].revents) & (POLLERR | POLLHUP | POLLNVAL))
-            return 6;
     }
     return 0;
 }

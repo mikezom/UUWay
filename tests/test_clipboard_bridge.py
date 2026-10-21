@@ -65,10 +65,8 @@ class ClipboardBridgeTests(unittest.TestCase):
     def setUpClass(cls):
         cls.build = Path(tempfile.mkdtemp(prefix="uurb-clipboard-build-"))
         cls.executable = cls.build / "uu-clipboard-bridge"
-        subprocess.run(
-            ["cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-o", str(cls.executable),
-             str(ROOT / "src" / "uu_clipboard_bridge.c"), "-lX11", "-lXfixes"],
-            check=True, cwd=ROOT)
+        subprocess.run(["bash", str(ROOT / "scripts/build-clipboard-bridge.sh"), str(cls.build)],
+                       check=True, cwd=ROOT)
         # Stands in for Wine running uu-clipboard-files.exe: saves one file
         # into the Z:\ directory it is given, after the delay in a "delay" file.
         (cls.build / "uu-clipboard-files.exe").write_bytes(b"")
@@ -91,7 +89,8 @@ class ClipboardBridgeTests(unittest.TestCase):
         self.environment.update(WINELOADER=str(self.wine), WINEPREFIX=self.cache.name,
                                 XDG_CACHE_HOME=self.cache.name,
                                 DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent",
-                                UURB_CLIPBOARD_KEEP_SECONDS="2")
+                                UURB_CLIPBOARD_KEEP_SECONDS="2",
+                                UURB_CLIPBOARD_WAYLAND="0")
         self.stale = Path(self.cache.name) / "uurb-clipboard" / "files-stale"
         self.stale.mkdir(parents=True)
         self.servers = []
@@ -155,6 +154,20 @@ class ClipboardBridgeTests(unittest.TestCase):
         self.copy(self.uu, "phone copy")
         self.wait_for(lambda: self.paste(self.desktop) == "phone copy", "phone copy did not reach desktop")
         self.assertTrue(self.bridge_owns(self.desktop))
+
+    def test_falls_back_when_wayland_socket_is_unavailable(self):
+        self.bridge.terminate()
+        self.bridge.wait(timeout=5)
+        self.log.seek(0)
+        self.log.truncate()
+        environment = dict(self.environment, UURB_CLIPBOARD_WAYLAND='1',
+                           WAYLAND_DISPLAY=str(Path(self.cache.name) / 'missing-wayland-socket'))
+        environment.pop('WAYLAND_SOCKET', None)
+        self.bridge = subprocess.Popen([str(self.executable), self.uu, self.desktop],
+                                       env=environment, stdout=subprocess.DEVNULL, stderr=self.log)
+        self.wait_for(lambda: b'Wayland clipboard unavailable' in self.read_log(), 'no Xwayland fallback')
+        self.copy(self.desktop, 'fallback clipboard')
+        self.wait_for(lambda: self.paste(self.uu) == 'fallback clipboard', 'fallback did not transfer')
 
     def test_gnome_file_list_also_reaches_uu_as_uris(self):
         self.copy(self.desktop, "copy\nfile:///home/fixture/a%20b.txt\nfile:///home/fixture/c",

@@ -23,7 +23,7 @@ cuda_debs=(
 )
 packages=(ca-certificates curl gnupg git ripgrep python3 build-essential gcc-11 g++-11
           gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 meson ninja-build pkg-config
-          libjson-c-dev libx11-dev libxfixes-dev libpipewire-0.3-dev libspa-0.2-dev libvulkan-dev
+          libjson-c-dev libx11-dev libxfixes-dev libwayland-dev libpipewire-0.3-dev libspa-0.2-dev libvulkan-dev
           glslang-tools libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
           libfcitx5core-dev libfcitx5utils-dev dpkg-dev xz-utils)
 

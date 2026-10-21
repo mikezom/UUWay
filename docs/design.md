@@ -121,6 +121,12 @@ bridge watches `CLIPBOARD` ownership with XFixes on that display and on Xwayland
 text, `text/uri-list`, `x-special/gnome-copied-files` and `image/png` across. Wine converts file
 lists to `CF_HDROP` and PNG to bitmaps; Mutter mirrors Xwayland's clipboard to Wayland apps.
 
+On KDE, Xwayland exposes a native Wayland selection to X11 clients only while an X11 window is
+active. The bridge therefore also listens through `ext-data-control-v1` when the compositor
+advertises it, so background UU clipboard changes arrive without requiring an X11 window to be
+focused. Content fingerprints suppress the selection echo when KWin mirrors X11 copies back to
+Wayland. The protocol listener is optional; Xwayland-only compositors keep using the XFixes path.
+
 While a transfer waits on one display, the bridge keeps answering requests on both and queues
 owner changes instead of dropping them. The newest change wins, and content a side already holds
 is never offered to it again, so the two clipboards cannot echo. Each transfer is logged with its

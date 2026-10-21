@@ -22,9 +22,7 @@ x86_64-w64-mingw32-gcc "${common[@]}" "${pe_link[@]}" -shared -I "$repo_dir/src"
 cc "${common[@]}" -I "$repo_dir/src" \
     -o "$output_dir/uu-terminal-bridge" \
     "$repo_dir/src/uu_terminal_bridge.c" -lutil
-cc "${common[@]}" \
-    -o "$output_dir/uu-clipboard-bridge" \
-    "$repo_dir/src/uu_clipboard_bridge.c" -lX11 -lXfixes
+bash "$repo_dir/scripts/build-clipboard-bridge.sh" "$output_dir"
 x86_64-w64-mingw32-gcc "${common[@]}" "${pe_link[@]}" -municode \
     -o "$output_dir/uu-clipboard-files.exe" \
     "$repo_dir/src/uu_clipboard_files.c" -lole32 -luuid

@@ -20,6 +20,19 @@ The dated observations below describe one test host; they are not a portable
 installer, and that host's UU account, Portal tokens and Wine prefix must not
 be copied to other machines.
 
+## Bidirectional Clipboard
+
+KWin shares a native Wayland clipboard with Xwayland clients only while an X11 window is active.
+UUWay therefore listens directly through `ext-data-control-v1` where available, including this
+host's KWin 6.7.4. This fixes desktop-to-controller copies while a native KDE application is
+focused. The `wayland` package supplies the runtime library and protocol scanner used during
+the AUR build. Compositors without the protocol retain the existing Xwayland bridge.
+
+Run `/usr/bin/python3 -m unittest tests.test_clipboard_bridge tests.test_clipboard_wayland`
+to check the X11 fallback and an isolated headless KWin session. The native tests cover UTF-8
+text, image and file-list formats, concurrent copies, and echo/transient filtering. Actual UU
+controller-side paste still requires a manual remote test.
+
 ## Check this computer
 
 Run these from the logged-in Plasma **Wayland** session as your normal user:
