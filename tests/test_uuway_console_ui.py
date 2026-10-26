@@ -210,6 +210,29 @@ class ConsoleInteractionTests(unittest.TestCase):
         tray.update()
         self.assertFalse(tray.items["control"].get_sensitive())
 
+    def test_title_buttons_outrank_kde_window_decorations(self):
+        decorations = Gtk.CssProvider()
+        decorations.load_from_data(b"button.titlebutton { background-image: linear-gradient(white, white); }"
+                                   b" button.titlebutton image { color: transparent; }")
+        screen = self.ui.window.get_screen()
+        Gtk.StyleContext.add_provider_for_screen(screen, decorations, console.KDE_DECORATIONS_PRIORITY)
+        self.addCleanup(Gtk.StyleContext.remove_provider_for_screen, screen, decorations)
+        settle()
+        buttons = []
+
+        def collect(widget):
+            if isinstance(widget, Gtk.Button) and widget.get_style_context().has_class("titlebutton"):
+                buttons.append(widget)
+            if isinstance(widget, Gtk.Container):
+                widget.forall(collect)
+        collect(self.ui.window.get_titlebar())
+        self.assertTrue(buttons)
+        for button in buttons:
+            context = button.get_style_context()
+            self.assertIsNone(context.get_property("background-image", context.get_state()))
+            image = button.get_child().get_style_context()
+            self.assertEqual(image.get_property("color", image.get_state()).alpha, 1)
+
     def test_auto_save_rolls_back_selection_when_write_fails(self):
         with patch.object(console, "_write_json", side_effect=OSError("fixture full disk")):
             self.ui.backend.set_active(1)

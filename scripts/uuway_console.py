@@ -39,6 +39,8 @@ SERVICE_NAMES = {
     "uu-native-text.service": "文字兼容服务",
     "uu-native-display.service": "显示保护服务",
 }
+# libwindow-decorations-gtk-module's GTK_STYLE_PROVIDER_PRIORITY_USER + 1.
+KDE_DECORATIONS_PRIORITY = 801
 PLASMA_READONLY = (os.environ.get('XDG_SESSION_TYPE') == 'wayland' and
                    'KDE' in os.environ.get('XDG_CURRENT_DESKTOP', '').split(':'))
 if PLASMA_READONLY:
@@ -1946,8 +1948,6 @@ class Console:
             .uuway .sidebar { background: #111d31; }
             .uuway .brand { color: #ecf6fc; font-size: 22px; font-weight: 800; letter-spacing: -.7px; }
             .uuway .sidebar-footer { color: #8399b5; font-size: 10px; letter-spacing: 1px; }
-            .uuway headerbar button.titlebutton { min-height: 22px; min-width: 22px; padding: 2px; background: transparent; border-color: transparent; }
-            .uuway headerbar button.titlebutton:hover { background: #e5edf5; }
             .uuway .navigation { background: transparent; }
             .uuway .navigation row { background: transparent; border-radius: 9px; margin: 3px 12px; padding: 13px 12px; color: #a2b3ca; }
             .uuway .navigation row label, .uuway .navigation row image { color: #a2b3ca; }
@@ -2014,6 +2014,19 @@ class Console:
         """)
         self.Gtk.StyleContext.add_provider_for_screen(self.window.get_screen(), css,
                                                       self.Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        # Breeze and KDE's window-decorations GTK module paint title buttons as background images
+        # drawn for the KWin title bar (light strokes when it is dark) and hide the icons. The
+        # module loads window_decorations.css at user priority + 1 and wins ties.
+        titlebuttons = self.Gtk.CssProvider()
+        titlebuttons.load_from_data(b"""
+            .uuway headerbar button.titlebutton { min-height: 22px; min-width: 22px; padding: 2px; background: transparent; border-color: transparent; }
+            .uuway headerbar button.titlebutton:hover { background: #e5edf5; }
+            .uuway headerbar button.titlebutton image { color: #45566e; }
+            .uuway headerbar button.titlebutton.close:hover { background: #f6dede; }
+            .uuway headerbar button.titlebutton.close:hover image { color: #a45151; }
+        """)
+        self.Gtk.StyleContext.add_provider_for_screen(self.window.get_screen(), titlebuttons,
+                                                      KDE_DECORATIONS_PRIORITY + 1)
 
 
 def main(argv=None):
