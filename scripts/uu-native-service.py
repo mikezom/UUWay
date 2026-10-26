@@ -502,6 +502,9 @@ class DesktopImageMapping:
                         stderr=subprocess.DEVNULL, timeout=10, check=False)
                 except (OSError, subprocess.SubprocessError):
                     pass
+            deadline = time.monotonic() + 5
+            while trial.prefix_processes(self.prefix) and time.monotonic() < deadline:
+                time.sleep(0.05)
         return True
 
 

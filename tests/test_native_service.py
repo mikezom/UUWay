@@ -368,6 +368,30 @@ class LinuxWineMappingTests(unittest.TestCase):
 
 
 class DesktopImageMappingTests(unittest.TestCase):
+    def test_waits_for_wine_clients_to_exit_after_wineserver_stops(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'system.reg').write_text('fixture')
+            with patch.object(service.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
+                    patch.object(service.trial, 'prefix_processes',
+                                 side_effect=[[{'pid': 123, 'name': 'explorer.exe'}], []]) as processes, \
+                    patch.object(service.time, 'sleep') as sleep:
+                self.assertTrue(service.DesktopImageMapping(root).apply())
+            self.assertEqual(processes.call_count, 2)
+            sleep.assert_called_once_with(0.05)
+
+    def test_client_exit_wait_is_bounded_and_does_not_kill_processes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'system.reg').write_text('fixture')
+            with patch.object(service.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as run, \
+                    patch.object(service.trial, 'prefix_processes', return_value=[{'pid': 123}]), \
+                    patch.object(service.time, 'monotonic', side_effect=[0, 1, 6]), \
+                    patch.object(service.time, 'sleep') as sleep:
+                self.assertTrue(service.DesktopImageMapping(root).apply())
+            sleep.assert_called_once_with(0.05)
+            self.assertEqual(run.call_count, 5)
+
     def test_default_penguin_is_written_to_wine_desktop_registry(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
