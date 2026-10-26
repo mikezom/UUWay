@@ -63,9 +63,12 @@ UPDATE_RESUME_UNIT = 'uuway-update-resume'  # the one-shot that finishes an upda
 UPDATE_STALE_DAYS = 14
 SERVICE_MARKER = '# Managed by UURB native installer;'
 DESKTOP_MARKER = '# Managed by UUWay console installer'
+AMD_DESKTOP_MARKER = '# Managed by UUWay AMD\n'
 FCITX_MARKER = '# Managed by uuway setup'
 HELPERS = ('uu-clipboard-bridge', 'uu-clipboard-files.exe', 'uu-conpty.dll',
            'uu-terminal-bridge', 'uu-terminal-proxy.exe')
+GPU_BACKENDS = ('nvidia', 'amd')
+GPU_BACKEND_ENV = 'UURB_BACKEND'
 FCITX_CONF = '''{marker}
 [Addon]
 Name=UU Bridge native text input
@@ -135,6 +138,7 @@ class Context:
         self.config_dir = self.home / '.config/uurb'
         self.releases = self.home / '.local/share/uuway/releases'
         self.restart_bridge = False
+        self.restart_display = False
 
     @property
     def app_dir(self):
@@ -334,10 +338,12 @@ def wine_run(ctx):
     ctx.run(sudo + ['dpkg', '--add-architecture', 'i386'])
     if not list(Path('/etc/apt/sources.list.d').glob('winehq*')):
         ctx.run(sudo + ['install', '-d', '-m', '0755', '/etc/apt/keyrings'])
-        ctx.run(sudo + ['curl', '-fsSLo', '/etc/apt/keyrings/winehq-archive.key',
+        ctx.run(sudo + ['curl', '-fsSLo', '/etc/apt/keyrings/winehq-archive.asc',
                         'https://dl.winehq.org/wine-builds/winehq.key'])
         ctx.run(sudo + ['curl', '-fsSLo', '/etc/apt/sources.list.d/winehq-noble.sources',
                         'https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources'])
+        ctx.run(sudo + ['sed', '-i', 's@winehq-archive.key@winehq-archive.asc@',
+                        '/etc/apt/sources.list.d/winehq-noble.sources'])
     else:
         info('已有 WineHQ 软件源配置，保持不变。')
     ctx.run(wine_pin_command(ctx))
@@ -412,6 +418,41 @@ def find_installer(ctx):
 def prefix_done(ctx):
     return ctx.server_exe.is_file() and signed_in(ctx) and powershell_native(ctx) \
         and not getattr(ctx.args, 'login', False)
+
+
+def open_uu(ctx):
+    """Open the login UI with the service bootstrap recent UU versions need."""
+    wine = WINE_DIR / 'wine'
+    executable = r'C:\Program Files\Netease\GameViewer\GameViewer.exe'
+    env = ctx.wine_env()
+    argv = [str(wine), executable]
+    if backend_for_context(ctx) == 'amd':
+        if unit_active(ctx, 'uu-native-bridge'):
+            raise SetupError('UU 后台运行在独立显示中，无法在桌面打开它的窗口。需要重新登录时请运行 uuway setup --login。')
+        stage = ctx.state_dir / 'login-support'
+        if not ctx.dry_run:
+            stage.mkdir(parents=True, exist_ok=True, mode=0o700)
+            for source, target in [('uu-native-bootstrap.exe', 'bootstrap.exe'),
+                                   ('uu-native-winlogon.exe', 'winlogon.exe')]:
+                shutil.copy2((backend_root('amd') or ROOT / 'build') / 'native-presenter' / source,
+                             stage / target)
+        argv = [str(wine), str(stage / 'bootstrap.exe'), '--login', executable,
+                'UURB-NATIVE-LOGIN-AMD']
+        env['UURB_NATIVE_BOOTSTRAP'] = '1'
+    if ctx.dry_run:
+        ctx.run(argv, env=env)
+        return
+    ctx.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with (ctx.state_dir / 'login.log').open('a') as log:
+        return subprocess.Popen(argv, env=env, stdout=log, stderr=log,
+                                start_new_session=True)
+
+
+def command_open(args):
+    ctx = Context(args)
+    if not ctx.server_exe.is_file():
+        raise SetupError('UU 尚未安装，请先运行 uuway-amd setup。')
+    open_uu(ctx)
 
 
 def prefix_run(ctx):
@@ -577,7 +618,8 @@ def portal_run(ctx):
     if getattr(ctx.args, 'regrant_screen', False) and ctx.restore_state.exists() and not ctx.dry_run:
         backup = ctx.restore_state.with_name(ctx.restore_state.name + f'.before-{int(time.time())}')
         ctx.restore_state.rename(backup)
-    info('接下来会弹出屏幕共享对话框：请选择要串流给手机的显示器，并勾选「记住」。')
+    info('接下来会检查屏幕共享：请选择一块显示器，并勾选「记住」。')
+    info('运行后，UU 可切换本次 GNOME 会话的所有活动显示器，包括之后创建的超级屏。')
     try:
         ctx.run([PYTHON, ROOT / 'scripts/probe-wayland-portal.py', '--capture-check',
                  '--restore-state', ctx.restore_state])
@@ -596,8 +638,9 @@ def package_bundle(ctx):
     if not ctx.dry_run:
         ctx.releases.parent.mkdir(parents=True, exist_ok=True)
         ctx.releases.mkdir(mode=0o700, exist_ok=True)
+    backend = backend_for_context(ctx)
     result = ctx.run([PYTHON, ROOT / 'scripts/package-uu-native-runtime.py', 'package', '--with-input',
-                      ctx.releases], capture=True)
+                      '--backend', backend, ctx.releases], capture=True)
     if ctx.dry_run:
         return ctx.releases / '<sha256>'
     try:
@@ -633,7 +676,7 @@ def runtime_done(ctx):
 
 BACKUP_CONFIG = ('native-runtime.json', 'text-backend.json', 'input-settings.json')
 RESTORE_NOTE = """To go back to the previous installation, from this directory:
-  cp -a home/. ~/
+  cp -a --remove-destination --no-preserve=mode home/. ~/
   systemctl --user daemon-reload && systemctl --user restart uu-native-bridge
 Files are stored under home/ with the path they have relative to your home directory.
 The old runtime directories are never deleted by uuway.
@@ -685,14 +728,24 @@ def ensure_backup(ctx):
 
 def runtime_run(ctx):
     ensure_backup(ctx)
+    previous = read_json(ctx.runtime_config) or {}
+    if not getattr(ctx, 'backend', None):
+        ctx.backend = backend_for_context(ctx)
+    bundle = package_bundle(ctx)
+    new_manifest = read_json(bundle / 'manifest.json') or {}
+    if (new_manifest.get('contract', {}).get('virtual_display_emulation') is True and
+            str(bundle) != previous.get('bundle')):
+        # Reload the independent daemon on every runtime upgrade, including
+        # fixes within the same virtual-display ABI. Text keeps running.
+        ctx.restart_display = True
     if unit_active(ctx, 'uu-native-bridge'):
         info('先停止 UUWay 桥接服务，写好配置后再启动。')
         ctx.run(['systemctl', '--user', 'stop', 'uu-native-bridge.service'])
-    bundle = package_bundle(ctx)
     ok(f'运行时：{bundle}')
     command = [PYTHON, ROOT / 'scripts/install-uu-native-service.py', '--bundle', bundle,
                '--prefix', ctx.prefix, '--restore-state', ctx.restore_state,
-               '--state-parent', ctx.state_dir, '--text-socket', ctx.state_dir / 'text.sock']
+               '--state-parent', ctx.state_dir, '--text-socket', ctx.state_dir / 'text.sock',
+               '--backend', ctx.backend]
     if not ctx.runtime_config.exists():
         # A re-run must keep what the console saved, so these only go in on a fresh install.
         command += ['--cursor-mode', 'metadata']
@@ -751,11 +804,14 @@ def start_run(ctx):
             info(('文字服务' if plasma_wayland() else '文字与显示服务') +
                  '保持运行，不会被隐式重启（会丢失剪贴板所有权）；空闲时可用 uuway refresh --restart-services 重启。')
         ctx.run(['systemctl', '--user', 'restart', 'uu-native-bridge.service'])
+    else:
+        ctx.run(['systemctl', '--user', 'start', *(name + '.service' for name in SERVICES)])
     if not ctx.dry_run:
         time.sleep(5)
         if not unit_active(ctx, 'uu-native-bridge'):
             raise SetupError('uu-native-bridge 没有启动，请查看：journalctl --user -u uu-native-bridge -e')
     ctx.restart_bridge = False
+    ctx.restart_display = False
     ok('服务已启动')
 
 
@@ -1134,7 +1190,12 @@ def command_refresh(args):
     if unit_active(ctx, 'uu-native-bridge') and not ctx.confirm('刷新会重启桥接服务，正在进行的远程会话会断开。继续吗？'):
         return 1
     with setup_lock(ctx):
-        run_steps(ctx, set(REFRESH_STEPS), set())
+        steps = set(REFRESH_STEPS)
+        if ROOT.resolve() == DEB_ROOT:
+            # Remove a source install's immutable per-user menu entry, which
+            # otherwise shadows the console delivered by each package update.
+            steps.add('launchers')
+        run_steps(ctx, steps, set())
     return 0
 
 
@@ -1320,6 +1381,12 @@ def update_busy(ctx):
 def update_check(ctx, args):
     installed = deb_version(ctx)
     latest = latest_known(ctx)
+    if getattr(args, 'json', False):
+        print(json.dumps(dict(installed=installed, latest=latest.version, tag=latest.tag, url=latest.url,
+                              published=latest.published, checked_at=int(time.time()),
+                              available=bool(installed and is_newer(ctx, latest.version, installed)),
+                              installable=bool(installed and not installed.startswith('0.0.0~')))))
+        return 0
     if installed is None:
         info(f'最新正式版：{latest.version}（{latest.url}）')
         warn('这不是用安装包装的 UUWay（源码目录或开发构建），没法比较版本，也不能用 uuway update 安装。')
@@ -1369,6 +1436,18 @@ def result_succeeded(result):
 
 
 def update_status(ctx, args):
+    if getattr(args, 'json', False):
+        installed = deb_version(ctx)
+        result = read_json(UPDATE_STATE / 'last-result.json')
+        result = result if isinstance(result, dict) else None
+        target = result.get('rollback_to') if result else None
+        previous = target.get('deb') if isinstance(target, dict) else None
+        print(json.dumps(dict(installed=installed, installable=bool(installed and not installed.startswith('0.0.0~')),
+                              busy=update_busy(ctx), result=result, progress=read_progress(20),
+                              rollback_available=bool(installed and isinstance(previous, str) and
+                                                      Path(previous).is_absolute() and Path(previous).is_file())),
+                         ensure_ascii=False))
+        return 0
     if update_busy(ctx):
         warn('更新正在进行中，最近的进度：')
         for line in read_progress(12):
@@ -1386,6 +1465,8 @@ def update_recovery_layer(ctx, args):
     timed = timed_state(ctx)
     if timed and timed[0] and timed[1] == getpass.getuser():
         return
+    if getattr(args, 'allow_no_recovery', False):
+        return  # Explicit GUI/CLI consent; never enables autologin implicitly.
     warn('这台机器在桌面崩溃或注销后不会自动重新登录：万一更新让桌面崩溃，没有人在本机登录，UU 就一直离线。')
     info('先开启：uuway autologin on')
     if ctx.assume_yes or not sys.stdin.isatty():
@@ -1631,6 +1712,7 @@ def command_uninstall(args):
                 warn(f'不是 UUWay 管理的文件，已保留：{path}')
         except OSError as error:
             warn(f'{path}：{error}')
+    remove_amd_launchers(ctx)
     ctx.run(['systemctl', '--user', 'daemon-reload'], check=False)
     if args.purge:
         for directory in (ctx.config_dir, ctx.state_dir, ctx.releases.parent):
@@ -1674,12 +1756,18 @@ def build_parser():
     setup.add_argument('--login', action='store_true', help='即使已登录也重新打开 UU 登录一次')
     setup.add_argument('--regrant-screen', action='store_true', help='重新授权屏幕共享')
     setup.add_argument('--restart-services', action='store_true', help='同时重启文字与显示服务')
+    setup.add_argument('--restart-display', action='store_true', help='重启显示服务以加载多屏与超级屏更新（移除现有超级屏）')
     setup.set_defaults(handler=command_setup)
+
+    launch = commands.add_parser('open', help='打开 UU 窗口（含新版 UU 登录所需的服务引导）')
+    launch.add_argument('--prefix', type=Path)
+    launch.set_defaults(handler=command_open)
 
     refresh = commands.add_parser('refresh', help='升级软件包后，重打运行时并重启桥接服务')
     common(refresh)
     refresh.add_argument('--prefix', type=Path)
     refresh.add_argument('--restart-services', action='store_true', help='同时重启文字与显示服务')
+    refresh.add_argument('--restart-display', action='store_true', help='重启显示服务并移除现有超级屏，保留文字服务')
     refresh.set_defaults(handler=command_refresh)
 
     doctor = commands.add_parser('doctor', help='检查环境与安装状态')
@@ -1699,6 +1787,9 @@ def build_parser():
     update.add_argument('--prefix', type=Path)
     update.add_argument('--source', type=Path, help=argparse.SUPPRESS)  # rehearsal: a release staged by hand
     update.add_argument('--tag', help=argparse.SUPPRESS)
+    update.add_argument('--json', action='store_true', help='以 JSON 返回检查结果或更新状态')
+    update.add_argument('--allow-no-recovery', action='store_true',
+                        help='明确允许未配置桌面自动恢复时安装更新；不更改自动登录设置')
     update.add_argument('--reboot-if-stuck', action='store_true',
                         help='回滚后桌面仍然回不来时，自动重启这台机器一次（会中断正在跑的任务）')
     update.set_defaults(handler=command_update)

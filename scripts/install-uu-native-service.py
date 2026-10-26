@@ -56,19 +56,27 @@ def install(bundle, prefix, restore_state, state_parent, text_socket, cursor_mod
     for directory in (prefix, restore_state.parent, state_parent, text_socket.parent):
         trial.private_directory(directory)
     # Fixed schema prevents shell/environment injection; never store credentials.
+    selected_backend = backend or verified.get('backend', 'nvidia')
+    if selected_backend not in ('nvidia', 'amd'):
+        raise ValueError('Unknown GPU backend')
     config = dict(schema=1, prefix=str(prefix.resolve()), bundle=str(bundle.resolve()),
                   restore_state=str(restore_state.absolute()), state_parent=str(state_parent.resolve()),
-                  text_socket=str(text_socket.absolute()), cursor_mode=cursor_mode)
+                  text_socket=str(text_socket.absolute()), cursor_mode=cursor_mode,
+                  backend=selected_backend)
     config_dir = Path.home() / '.config/uurb'
     config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     trial.private_directory(config_dir)
     config_path = config_dir / 'native-runtime.json'
     if config_path.exists() or config_path.is_symlink():
         previous = trial.state_tools.read_private(config_path)
-        if set(previous) != set(config) or previous.get('schema') != 1:
+        allowed_old = set(config) - {'backend'}
+        if (set(previous) not in (allowed_old, set(config)) or previous.get('schema') != 1):
             raise ValueError('Refusing an unrecognized service configuration')
         if cursor_mode is None:
             cursor_mode = previous.get('cursor_mode')
+        if backend is None and previous.get('backend') in ('nvidia', 'amd'):
+            selected_backend = previous['backend']
+            config['backend'] = selected_backend
     elif cursor_mode is None:
         cursor_mode = 'metadata'
     if (cursor_mode not in ('embedded', 'metadata', 'composited') or

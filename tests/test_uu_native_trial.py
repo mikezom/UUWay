@@ -2,6 +2,7 @@ import importlib.util
 import copy
 import os
 import socket
+import shutil
 import subprocess
 from pathlib import Path
 import tempfile
@@ -14,7 +15,70 @@ trial = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(trial)
 
 
+class ServerLivenessTests(unittest.TestCase):
+    def test_a_missing_server_triggers_recovery_but_a_short_restart_is_tolerated(self):
+        state = {'now': 0, 'alive': False}
+        watch = trial.ServerLiveness(lambda: state['alive'], lambda: state['now'])
+        self.assertTrue(watch.healthy())
+        state['now'] = 5
+        state['alive'] = True
+        self.assertTrue(watch.healthy())
+        state['now'] = 10
+        state['alive'] = False
+        self.assertTrue(watch.healthy())
+        state['now'] = 20
+        self.assertFalse(watch.healthy())
+
+    def test_a_zombie_or_another_prefix_does_not_count_as_a_live_server(self):
+        with tempfile.TemporaryDirectory() as name:
+            proc = Path(name)
+            server = proc / '123'
+            server.mkdir()
+            (server / 'cmdline').write_bytes(b'C:\\UU\\GameViewerServer.exe\0')
+            with patch.object(trial, 'prefix_processes', return_value=[{'pid': 123, 'name': 'GameViewerServe'}]):
+                (server / 'stat').write_text('123 (GameViewerServe) Z 1')
+                self.assertFalse(trial.uu_server_alive(Path('/owned/prefix'), proc))
+                (server / 'stat').write_text('123 (GameViewerServe) S 1')
+                self.assertTrue(trial.uu_server_alive(Path('/owned/prefix'), proc))
+            with patch.object(trial, 'prefix_processes', return_value=[]):
+                self.assertFalse(trial.uu_server_alive(Path('/owned/prefix'), proc))
+
+
 class CleanupTests(unittest.TestCase):
+    def test_cursor_environment_retains_native_metadata_for_every_output(self):
+        directory = Path('/private/trial')
+        for mode, embedded, expected in [('metadata', False, True), ('composited', False, True),
+                                         ('embedded', True, True), ('embedded', False, False),
+                                         ('hidden', False, False)]:
+            with self.subTest(mode=mode, embedded=embedded):
+                environment = dict(UURB_CURSOR_PRESENTATION='client', UURB_CURSOR_STATE_PATH='stale',
+                                   UURB_CURSOR_STATE_DIR='stale', OTHER_SETTING='retained')
+                args = trial.cursor_environment(environment, directory, mode, embedded)
+                self.assertNotIn('UURB_CURSOR_PRESENTATION', environment)
+                self.assertEqual(environment['OTHER_SETTING'], 'retained')
+                if expected:
+                    self.assertEqual(environment['UURB_CURSOR_STATE_PATH'],
+                                     trial.winpath(directory / 'cursor.state'))
+                    self.assertEqual(environment['UURB_CURSOR_STATE_DIR'], trial.winpath(directory))
+                    self.assertEqual(args, ['--cursor-state', str(directory / 'cursor.state')])
+                else:
+                    self.assertNotIn('UURB_CURSOR_STATE_PATH', environment)
+                    self.assertNotIn('UURB_CURSOR_STATE_DIR', environment)
+                    self.assertEqual(args, [])
+
+    @unittest.skipUnless(shutil.which('xvfb-run'), 'requires Xvfb')
+    def test_runtime_keeps_wine_on_a_separate_display_for_clipboard_files(self):
+        # Exercise the actual launcher, including an inherited desktop DISPLAY.
+        # A real desktop launch would make clipboard discover() reject the pair.
+        with patch.object(trial, 'WINE', '/usr/bin/python3'):
+            command = trial.wine_launch_command(
+                ['-c', 'import os; print(os.environ["DISPLAY"])'],
+                dict(width=640, height=360))
+        result = subprocess.run(command, env=dict(os.environ, DISPLAY=':9876'),
+                                capture_output=True, text=True, check=True, timeout=10)
+        self.assertTrue(result.stdout.strip().startswith(':'))
+        self.assertNotEqual(result.stdout.strip(), ':9876')
+
     def test_deferred_ime_allows_only_missing_exact_private_endpoint(self):
         with tempfile.TemporaryDirectory() as name:
             parent = Path(name); endpoint = parent / 'ime.sock'
@@ -65,6 +129,15 @@ class CleanupTests(unittest.TestCase):
             if change=='missing':del invalid['connectors']
             with self.subTest(change=change):self.assertFalse(trial.can_recreate_display_in_place(before,invalid))
 
+    def test_super_screen_origin_handoff_retains_uu_only_for_owned_connectors(self):
+        physical = dict(connectors=['DP-fixture'], modes=[dict(width=1920, height=1080)],
+                        layout=[dict(x=0, y=0, scale=1., transform=0, outputs=1)])
+        virtual = copy.deepcopy(physical)
+        virtual['connectors'] = ['Meta-fixture']
+        self.assertFalse(trial.can_recreate_display_in_place(physical, virtual))
+        self.assertTrue(trial.can_recreate_display_in_place(physical, virtual, ['Meta-fixture']))
+        self.assertTrue(trial.can_recreate_display_in_place(virtual, physical, ['Meta-fixture']))
+
     def test_cold_recovery_does_not_stop_an_already_idle_wineserver(self):
         with tempfile.TemporaryDirectory() as name:
             directory = Path(name)
@@ -110,7 +183,7 @@ class CleanupTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 os.link(destination, destination, follow_symlinks=False)
 
-    def test_recovery_refuses_live_prefix_without_running_cleanup(self):
+    def test_recovery_refuses_live_prefix_and_retains_the_owned_cursor_policy(self):
         with tempfile.TemporaryDirectory() as name:
             parent = Path(name)
             directory = parent / 'trial-test'; directory.mkdir(mode=0o700)
@@ -130,6 +203,33 @@ class CleanupTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, 'remain idle'):
                     trial.recover_interrupted(prefix, parent)
                 cleanup.assert_not_called()
+            # Recovering an old bundle removes its former client-only registry
+            # value; recovering a native-metadata bundle must not invent it.
+            for presentation in (None, 'client', 'native'):
+                with self.subTest(presentation=presentation):
+                    journal['capture_cursor_mode'] = 'metadata'
+                    journal.pop('cursor_presentation', None)
+                    if presentation is not None:
+                        journal['cursor_presentation'] = presentation
+                    trial.state_tools.write_private(directory / 'journal.json', journal)
+
+                    def cleanup_fixture(*args, **kwargs):
+                        trial.state_tools.write_private(directory / 'cleanup.json', {})
+                        return []
+
+                    with patch.object(trial.bundle_tools, 'verify', return_value={'release_id': 'fixture'}), \
+                         patch.object(trial.bundle_tools, 'digest', return_value={'sha256': 'same'}), \
+                         patch.object(trial.bundle_tools, 'INPUTS', {'app/bin/dxgi.dll': 'unused'}), \
+                         patch.object(trial, 'prefix_processes', return_value=[]), \
+                         patch.object(trial, 'event'), \
+                         patch.object(trial, 'cleanup_trial', side_effect=cleanup_fixture) as cleanup:
+                        trial.recover_interrupted(prefix, parent)
+                    environment = cleanup.call_args.args[2]
+                    self.assertEqual(environment.get('UURB_CURSOR_PRESENTATION'),
+                                     None if presentation == 'native' else 'client')
+                    self.assertEqual(environment['UURB_CURSOR_STATE_PATH'],
+                                     trial.winpath(directory / 'cursor.state'))
+                    (directory / 'cleanup.json').unlink()
 
     def test_broker_failure_does_not_skip_owned_links(self):
         with tempfile.TemporaryDirectory() as name:
@@ -185,6 +285,21 @@ class TopologyPollTests(unittest.TestCase):
         self.assertIsNone(stabilizer.observe({'width': 1920}, 600))
         self.assertEqual(stabilizer.observe({'width': 1920}, 700), {'width': 1920})
         self.assertEqual(stabilizer.accepted_after_ns, 500)
+
+    def test_extra_output_serial_bump_does_not_recreate_video(self):
+        initial = dict(generation=1, connectors=['a'], layout=[dict(x=0, y=0, scale=1., transform=0, outputs=1)],
+                       modes=[dict(width=1920, height=1080)])
+        # A second monitor changes Mutter's serial, not the tracked output.
+        extra = dict(initial, generation=2)
+        stabilizer = trial.TopologyStabilizer(initial, required=3)
+        for _ in range(10):
+            self.assertIsNone(stabilizer.observe(extra))
+        self.assertEqual(stabilizer.current, initial)
+        # A real change of the tracked output still wins.
+        changed = dict(extra, modes=[dict(width=1280, height=720)])
+        self.assertIsNone(stabilizer.observe(changed))
+        self.assertIsNone(stabilizer.observe(changed))
+        self.assertEqual(stabilizer.observe(changed), changed)
 
     def test_topology_changes_are_debounced_until_stable(self):
         initial = dict(generation=1, connectors=['a'], layout=[], modes=[dict(width=1024, height=768)])
