@@ -534,11 +534,29 @@ def open_uu(ctx):
                                 start_new_session=True)
 
 
+def open_plasma(ctx):
+    """UU allows one window per prefix, so hosting pauses while the desktop window is open."""
+    hosting = unit_active(ctx, 'uu-native-bridge')
+    if hosting:
+        info('暂停被控服务；从 UU 托盘退出后自动恢复。')
+        ctx.run(['systemctl', '--user', 'stop', 'uu-native-bridge.service'])
+    try:
+        bundle = package_bundle(ctx)
+        ctx.run([PYTHON, ROOT / 'scripts/uu-native-login.py', '--prefix', ctx.prefix,
+                 '--bundle', bundle, '--state-parent', ctx.state_dir, '--until-quit'])
+    finally:
+        if hosting:
+            ctx.run(['systemctl', '--user', 'start', 'uu-native-bridge.service'])
+
+
 def command_open(args):
     ctx = Context(args)
     if not ctx.server_exe.is_file():
         raise SetupError('UU 尚未安装，请先运行 uuway-amd setup。')
-    open_uu(ctx)
+    if plasma_wayland():
+        open_plasma(ctx)
+    else:
+        open_uu(ctx)
 
 
 def prefix_run(ctx):

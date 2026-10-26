@@ -16,13 +16,37 @@ spec = importlib.util.spec_from_file_location('login_trial', ROOT / 'scripts/uu-
 trial = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(trial)
 
+LOGIN_DEADLINE_SECONDS = 3600
+# The bootstrap applies the same grace before treating a missing server as gone.
+SERVER_GONE_SECONDS = 15
+
+
+class QuitWatcher:
+    """UU's tray Quit stops GameViewerServer.exe; while UU runs, Healthd restarts it within seconds."""
+
+    def __init__(self) -> None:
+        self.seen = False
+        self.missing_since: float | None = None
+
+    def quit(self, server_alive: bool, now: float) -> bool:
+        if server_alive:
+            self.seen = True
+            self.missing_since = None
+            return False
+        if not self.seen:
+            return False
+        if self.missing_since is None:
+            self.missing_since = now
+        return now - self.missing_since >= SERVER_GONE_SECONDS
+
 
 def logged_in(prefix):
     return any(not path.name.startswith('setting_guest_') for path in
                prefix.glob('drive_c/users/*/AppData/Local/GameViewer/setting_*.ini'))
 
 
-def run(prefix, bundle, state_parent, wait_for_user=False):
+def run(prefix, bundle, state_parent, wait_for_user=False, until_quit=False):
+    assert not (wait_for_user and until_quit)
     prefix = prefix.resolve()
     bundle = bundle.resolve()
     trial.private_directory(prefix)
@@ -74,7 +98,9 @@ def run(prefix, bundle, state_parent, wait_for_user=False):
         print('请在 UU 窗口中登录，登录成功后安装向导会自动继续。', flush=True)
         started = time.monotonic()
         restored = False
-        while not stopping and time.monotonic() - started < 3600:
+        watcher = QuitWatcher()
+        # A session used to control other computers may legitimately last for hours.
+        while not stopping and (until_quit or time.monotonic() - started < LOGIN_DEADLINE_SECONDS):
             if not restored and time.monotonic() - started >= 8:
                 subprocess.run([trial.WINE, str(ROOT / 'build/native-presenter/uu-show-login.exe')],
                                env=env, timeout=15, check=True)
@@ -82,7 +108,12 @@ def run(prefix, bundle, state_parent, wait_for_user=False):
                 if wait_for_user:
                     input('登录完成后从 UU 托盘完全退出，然后按回车继续…')
                     break
-            if (not wait_for_user and logged_in(prefix)) or launcher.poll() is not None:
+            if until_quit:
+                if watcher.quit(trial.uu_server_alive(prefix), time.monotonic()):
+                    break
+            elif not wait_for_user and logged_in(prefix):
+                break
+            if launcher.poll() is not None:
                 break
             time.sleep(1)
         success = logged_in(prefix) and not stopping
@@ -103,9 +134,12 @@ def main():
     parser.add_argument('--prefix', type=Path, required=True)
     parser.add_argument('--bundle', type=Path, required=True)
     parser.add_argument('--state-parent', type=Path, required=True)
-    parser.add_argument('--wait-for-user', action='store_true')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--wait-for-user', action='store_true')
+    mode.add_argument('--until-quit', action='store_true',
+                      help='keep the window open until UU is quit from its tray icon')
     args = parser.parse_args()
-    return run(args.prefix, args.bundle, args.state_parent, args.wait_for_user)
+    return run(args.prefix, args.bundle, args.state_parent, args.wait_for_user, args.until_quit)
 
 
 if __name__ == '__main__':

@@ -22,6 +22,18 @@ class NativeLoginTests(unittest.TestCase):
             (settings / 'setting_account.ini').touch()
             self.assertTrue(login.logged_in(prefix))
 
+    def test_tray_quit_is_a_server_missing_past_the_restart_grace(self):
+        watcher = login.QuitWatcher()
+        grace = login.SERVER_GONE_SECONDS
+        self.assertFalse(watcher.quit(False, 0), 'a server that never started is not a quit')
+        self.assertFalse(watcher.quit(False, grace + 1))
+        self.assertFalse(watcher.quit(True, 100))
+        self.assertFalse(watcher.quit(False, 101))
+        self.assertFalse(watcher.quit(True, 101 + grace - 1), 'Healthd restarted it within the grace')
+        self.assertFalse(watcher.quit(False, 200))
+        self.assertFalse(watcher.quit(False, 200 + grace - 1))
+        self.assertTrue(watcher.quit(False, 200 + grace))
+
     def test_busy_prefix_is_rejected_before_creating_login_state(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

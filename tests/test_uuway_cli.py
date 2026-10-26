@@ -408,6 +408,42 @@ class KdePortalStepTests(CliCase):
         self.assertTrue(done)
 
 
+class PlasmaOpenTests(CliCase):
+    def open(self, fail_login=False):
+        ctx = self.record_commands(self.context())
+        ctx.dry_run = True
+        recorded = ctx.run
+
+        def run(argv, **kwargs):
+            result = recorded(argv, **kwargs)
+            if fail_login and str(argv[1]).endswith('uu-native-login.py'):
+                raise cli.SetupError('login failed')
+            return result
+        ctx.run = run
+        if fail_login:
+            with self.assertRaises(cli.SetupError):
+                cli.open_plasma(ctx)
+        else:
+            cli.open_plasma(ctx)
+        return [c[2] if c[0] == 'systemctl' else Path(c[1]).name for c in self.commands
+                if c[0] == 'systemctl' or c[1].endswith('uu-native-login.py')]
+
+    def test_hosting_pauses_for_the_window_and_resumes_after_it(self):
+        self.active.add('uu-native-bridge')
+        steps, _ = self.quiet(self.open)
+        self.assertEqual(steps, ['stop', 'uu-native-login.py', 'start'])
+        self.assertIn('--until-quit', next(c for c in self.commands if c[1].endswith('uu-native-login.py')))
+
+    def test_hosting_resumes_when_the_window_fails(self):
+        self.active.add('uu-native-bridge')
+        steps, _ = self.quiet(self.open, fail_login=True)
+        self.assertEqual(steps, ['stop', 'uu-native-login.py', 'start'])
+
+    def test_stopped_hosting_is_left_stopped(self):
+        steps, _ = self.quiet(self.open)
+        self.assertEqual(steps, ['uu-native-login.py'])
+
+
 class StartStepTests(CliCase):
     def test_explicit_restart_is_not_skipped_when_every_service_is_active(self):
         self.active.update(cli.SERVICES)

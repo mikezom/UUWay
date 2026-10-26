@@ -123,6 +123,7 @@ def files():
         ('config/70-uurb-native-input.rules', 'usr/lib/udev/rules.d/70-uurb-native-input.rules', 0o644),
         ('build/native-ime/libuurb-native-ime.so', f'{LIB}/fcitx5/libuurb-native-ime.so', 0o644),
         ('packaging/deb/uuway.desktop', 'usr/share/applications/uuway.desktop', 0o644),
+        ('packaging/deb/uuway-control.desktop', 'usr/share/applications/uuway-control.desktop', 0o644),
         ('packaging/deb/uuway-tray.desktop', f'{LIB}/assets/uuway-tray.desktop', 0o644),
         ('config/uuway-wine.preferences', f'{LIB}/config/uuway-wine.preferences', 0o644),
         ('packaging/deb/lintian-overrides', 'usr/share/lintian/overrides/uuway', 0o644),
