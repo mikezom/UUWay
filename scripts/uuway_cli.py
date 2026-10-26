@@ -297,10 +297,100 @@ def check_environment(ctx):
     if session != 'wayland' or not ('GNOME' in desktop or plasma_wayland()):
         raise SetupError(f'请在 GNOME 或 KDE Plasma Wayland 会话里运行（当前：{session or "未知"} / {desktop or "未知"}）。')
     ok('KDE Plasma Wayland（显示模式只读）' if plasma_wayland() else 'GNOME Wayland 会话')
-    gpus = ctx.probe(['nvidia-smi', '-L'])
-    if gpus.returncode != 0:
-        raise SetupError('没有找到可用的 NVIDIA 显卡驱动。UUWay 需要支持 NVENC 的 NVIDIA 显卡和官方驱动。')
-    ok('NVIDIA 显卡：' + gpus.stdout.splitlines()[0].split(' (UUID')[0])
+    backend = select_backend(ctx)
+    ctx.backend = backend
+    if backend == 'amd':
+        ok('AMD VA-API 硬件编码（兼容模式，画面经过内存中转）')
+    else:
+        gpus = ctx.probe(['nvidia-smi', '-L'])
+        ok('NVIDIA 显卡：' + (gpus.stdout.splitlines()[0].split(' (UUID')[0]
+                              if gpus.stdout.splitlines() else '驱动可用'))
+
+
+def amd_backend_enabled():
+    marker = ROOT / 'build/encoder-backend'
+    return marker.is_file() and marker.read_text().strip() == 'amd-vaapi'
+
+
+def backend_root(backend):
+    """Locate an immutable backend tree in a package or source checkout."""
+    for root in (ROOT / 'build/backends' / backend, DEB_ROOT / 'build/backends' / backend):
+        if root.is_dir():
+            return root
+    if backend == 'amd' and amd_backend_enabled():
+        return ROOT / 'build'
+    if backend == 'nvidia' and not amd_backend_enabled() and (ROOT / 'build').is_dir():
+        return ROOT / 'build'
+    return None
+
+
+def backend_available(backend):
+    root = backend_root(backend)
+    if not root:
+        return False
+    if root == ROOT / 'build':
+        return root.is_dir()
+    return (root / 'native-presenter').is_dir() and (root / 'dxvk-capture').is_dir()
+
+
+def amd_backend_probe(ctx, backend='amd'):
+    root = backend_root(backend) or ROOT / 'build'
+    binary = root / 'native-presenter/uu-vaapi-probe'
+    with tempfile.TemporaryDirectory(prefix='uuway-amd-check-') as directory:
+        return ctx.probe([binary, directory])
+
+
+def probe_backend(ctx, backend):
+    if not backend_available(backend):
+        return False, 'runtime is not installed'
+    if backend == 'nvidia':
+        result = ctx.probe(['nvidia-smi', '-L'])
+        stderr = getattr(result, 'stderr', '')
+        stderr = stderr if isinstance(stderr, str) else ''
+        return result.returncode == 0, stderr[-500:] or 'NVIDIA driver unavailable'
+    result = amd_backend_probe(ctx)
+    stderr = getattr(result, 'stderr', '')
+    stderr = stderr if isinstance(stderr, str) else ''
+    return result.returncode == 0, stderr[-500:] or 'VA-API H.264/HEVC probe failed'
+
+
+def configured_backend(ctx):
+    path = getattr(ctx, 'runtime_config', None)
+    if not isinstance(path, (str, os.PathLike, Path)):
+        return None
+    config = read_json(path)
+    value = config.get('backend') if isinstance(config, dict) else None
+    return value if value in GPU_BACKENDS else None
+
+
+def select_backend(ctx):
+    """Select NVIDIA first, then a verified AMD VA-API runtime."""
+    forced = os.environ.get(GPU_BACKEND_ENV, '').strip().lower()
+    if forced:
+        if forced not in GPU_BACKENDS:
+            raise SetupError(f'{GPU_BACKEND_ENV} 只能是 nvidia 或 amd。')
+        ok_backend, detail = probe_backend(ctx, forced)
+        if not ok_backend:
+            raise SetupError(f'强制选择 {forced} 后端失败：{detail}')
+        return forced
+    saved = configured_backend(ctx)
+    if saved:
+        ok_backend, detail = probe_backend(ctx, saved)
+        if not ok_backend:
+            raise SetupError(f'已保存的 {saved} 后端当前不可用：{detail}。如需切换请先删除配置或设置 {GPU_BACKEND_ENV}。')
+        return saved
+    for backend in GPU_BACKENDS:
+        ok_backend, _ = probe_backend(ctx, backend)
+        if ok_backend:
+            return backend
+    raise SetupError('没有检测到可用的 NVIDIA NVENC 或 AMD VA-API 后端；请安装对应显卡驱动后重试。UUWay 不会自动安装或切换显卡驱动。')
+
+
+def backend_for_context(ctx):
+    backend = getattr(ctx, 'backend', None) or configured_backend(ctx)
+    if backend in GPU_BACKENDS:
+        return backend
+    return 'amd' if amd_backend_enabled() else 'nvidia'
 
 
 # --------------------------------------------------------------------- step: wine
