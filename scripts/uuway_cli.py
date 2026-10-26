@@ -42,10 +42,6 @@ CUDA_HEADER = (Path('/opt/cuda/include/cuda.h') if Path('/var/lib/pacman/local')
 SERVICES = ('uu-native-display', 'uu-native-text', 'uu-native-bridge')
 
 
-def desktop_services():
-    return tuple(name for name in SERVICES if name != 'uu-native-display' or not plasma_wayland())
-
-
 GDM_CONFIGS = (Path('/etc/gdm3/custom.conf'), Path('/etc/gdm/custom.conf'))  # Debian/Ubuntu, Fedora/Arch
 AUTOLOGIN_KEYS = ('AutomaticLoginEnable', 'AutomaticLogin')
 TIMED_KEYS = ('TimedLoginEnable', 'TimedLogin', 'TimedLoginDelay')
@@ -743,7 +739,7 @@ def package_bundle(ctx):
 
 
 def runtime_units_current(ctx):
-    for name in desktop_services():
+    for name in SERVICES:
         try:
             text = (ctx.unit_dir / (name + '.service')).read_text()
         except OSError:
@@ -842,10 +838,10 @@ def runtime_run(ctx):
         if not plasma_wayland():
             command += ['--preserve-display-session']
     if plasma_wayland():
+        # KDE's display service only enumerates outputs, so the GNOME-oriented
+        # display write policy is explicitly turned off.
         command += ['--kde-readonly', '--no-preserve-display-session']
     ctx.run(command)
-    if plasma_wayland() and (ctx.unit_dir / 'uu-native-display.service').is_file():
-        ctx.run(['systemctl', '--user', 'disable', '--now', 'uu-native-display.service'])
     # Wine's Linux path view is applied while the bridge is stopped, and the short-lived
     # wineserver the registry update starts is reaped before the bridge's Wine starts.
     ctx.run([PYTHON, ROOT / 'scripts/configure-uu-wine-mappings.py', '--prefix', ctx.prefix,
@@ -869,7 +865,7 @@ def runtime_run(ctx):
 # --------------------------------------------------------------------- step: start
 
 def start_done(ctx):
-    return not ctx.restart_bridge and all(unit_active(ctx, name) for name in desktop_services())
+    return not ctx.restart_bridge and all(unit_active(ctx, name) for name in SERVICES)
 
 
 def restart_services_confirmed(ctx):
@@ -886,12 +882,12 @@ def restart_services_confirmed(ctx):
 
 
 def start_run(ctx):
-    ctx.run(['systemctl', '--user', 'enable', '--now', *(name + '.service' for name in desktop_services())])
+    ctx.run(['systemctl', '--user', 'enable', '--now', *(name + '.service' for name in SERVICES)])
     if ctx.restart_bridge:
         if getattr(ctx.args, 'restart_services', False) and restart_services_confirmed(ctx):
-            ctx.run(['systemctl', '--user', 'restart', *(name + '.service' for name in desktop_services() if name != 'uu-native-bridge')])
+            ctx.run(['systemctl', '--user', 'restart', *(name + '.service' for name in SERVICES if name != 'uu-native-bridge')])
         elif not ctx.dry_run:
-            info(('文字服务' if plasma_wayland() else '文字与显示服务') +
+            info('文字与显示服务' +
                  '保持运行，不会被隐式重启（会丢失剪贴板所有权）；空闲时可用 uuway refresh --restart-services 重启。')
         ctx.run(['systemctl', '--user', 'restart', 'uu-native-bridge.service'])
     else:
@@ -1303,13 +1299,26 @@ def command_doctor(args):
     check('ok' if session == 'wayland' and ('GNOME' in desktop or plasma_wayland()) else 'fail', 'Wayland 桌面会话',
           f'{session or "?"} / {desktop or "?"}')
     if plasma_wayland():
+        # The probe distinguishes a broken kscreen-doctor from a layout with
+        # nothing Windows can show, and names outputs left out of the stream.
         topology = ctx.probe(['kscreen-doctor', '-j'])
-        try:
-            from desktop_backend import plasma_topology
-            plasma_topology(json.loads(topology.stdout))
-            check('ok', 'KDE 单显示器拓扑（远程修改显示模式不可用）')
-        except (ValueError, TypeError, RuntimeError):
-            check('fail', 'KDE 单显示器拓扑', 'kscreen-doctor -j 不可用或当前显示器布局不受支持')
+        enabled = shown = None
+        if topology.returncode == 0:
+            with contextlib.suppress(ValueError, TypeError, AttributeError, RuntimeError):
+                parsed = json.loads(topology.stdout)
+                enabled = [item.get('name') for item in parsed.get('outputs', []) if item.get('enabled')]
+                from desktop_backend import plasma_layout
+                shown = [item['connector'] for item in plasma_layout(parsed)['monitors']]
+        if enabled is None:
+            check('fail', 'KDE 显示拓扑', 'kscreen-doctor -j 不可用或输出无法解析')
+        elif shown is None:
+            check('fail', 'KDE 显示拓扑', '没有可串流的显示器；请保持至少一台显示器未镜像、未旋转')
+        else:
+            hidden = [name for name in enabled if name not in shown]
+            check('warn' if hidden else 'ok', 'KDE 显示拓扑',
+                  f'串流 {len(shown)} 块屏：{"、".join(shown)}（主屏 {shown[0]}）'
+                  + (f'；镜像/旋转的 {"、".join(hidden)} 不会串流' if hidden else '')
+                  + '；远程修改显示模式不可用')
     gpus = ctx.probe(['nvidia-smi', '-L'])
     check('ok' if gpus.returncode == 0 else 'fail', 'NVIDIA 驱动',
           gpus.stdout.splitlines()[0] if gpus.returncode == 0 else '没有找到可用的 NVIDIA 驱动')
@@ -1377,7 +1386,7 @@ def command_doctor(args):
         bundle = Path(config.get('bundle', ''))
         check('ok' if bundle.is_dir() else 'fail', '运行时目录存在', str(bundle))
         check('ok' if runtime_units_current(ctx) else 'warn', '服务单元由 UUWay 管理且指向当前安装')
-    for name in desktop_services():
+    for name in SERVICES:
         check('ok' if unit_active(ctx, name) else 'fail', f'{name} 运行中')
         for dropin in sorted((ctx.unit_dir / (name + '.service.d')).glob('*.conf')):
             check('warn', f'{name} 有 drop-in 覆盖', str(dropin))

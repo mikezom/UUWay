@@ -24,6 +24,7 @@ RUNTIME_SCRIPTS = (
     'native_display_config.py',
     'native_display_confirmation.py',
     'native_display_guardian.py',
+    'native_display_kscreen.py',
     'native_display_topology.py',
     'mutter-direct-capture.py',
     'native_virtual_display.py',

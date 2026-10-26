@@ -228,7 +228,7 @@ class RuntimeStepTests(CliCase):
         self.assertEqual(command[command.index("--cursor-mode") + 1], "metadata")
         self.assertIn("--preserve-display-session", command)
 
-    def test_plasma_install_disables_display_writes_and_guardian(self):
+    def test_plasma_install_disables_display_writes_but_starts_the_display_service(self):
         with patch.object(cli, 'plasma_wayland', return_value=True):
             self.run_runtime()
             command = self.install_command()
@@ -239,7 +239,8 @@ class RuntimeStepTests(CliCase):
             ctx = self.record_commands(self.context())
             ctx.dry_run = True
             self.quiet(cli.start_run, ctx)
-            self.assertNotIn('uu-native-display.service', ' '.join(' '.join(c) for c in self.commands))
+            enable = next(c for c in self.commands if c[:3] == ['systemctl', '--user', 'enable'])
+            self.assertIn('uu-native-display.service', enable)
 
     def test_existing_install_keeps_what_the_console_saved(self):
         self.run_runtime(config={"cursor_mode": "composited"})
