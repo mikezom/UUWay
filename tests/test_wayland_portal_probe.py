@@ -15,6 +15,23 @@ spec.loader.exec_module(probe)
 
 
 class WaylandPortalProbeTests(unittest.TestCase):
+    def test_a_grant_must_be_the_expected_kde_output(self):
+        state = dict(outputs=[dict(name='DP-1', enabled=True, pos=dict(x=2743, y=0)),
+                              dict(name='DP-2', enabled=True, pos=dict(x=0, y=0)),
+                              dict(name='HDMI-A-1', enabled=False, pos=dict(x=0, y=0))])
+        position = probe.expected_output_position('DP-1', state)
+        self.assertEqual(position, (2743, 0))
+        probe.check_stream_output({'position': (2743, 0), 'size': (2560, 1440)}, 'DP-1', position)
+        with self.assertRaisesRegex(RuntimeError, 'DP-1'):
+            probe.check_stream_output({'position': (0, 0)}, 'DP-1', position)
+        with self.assertRaises(RuntimeError):
+            probe.check_stream_output({'size': (2560, 1440)}, 'DP-1', position)
+        with self.assertRaisesRegex(RuntimeError, 'not an enabled'):
+            probe.expected_output_position('HDMI-A-1', state)
+        state['outputs'][0]['pos'] = dict(x=0, y=0)
+        with self.assertRaisesRegex(RuntimeError, 'mirrored'):
+            probe.expected_output_position('DP-1', state)
+
     def test_kde_registers_installed_identity_once_before_portal_requests(self):
         from gi.repository import Gio
         bus = Mock()

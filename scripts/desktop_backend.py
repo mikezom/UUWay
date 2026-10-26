@@ -4,6 +4,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import subprocess
 
 
@@ -161,6 +162,18 @@ def plasma_topology(data):
                 layout=[dict(x=0, y=0, scale=primary['scale'], transform=0, outputs=1)],
                 modes=[dict(width=primary['width'], height=primary['height'])],
                 input_map=input_map(layout['monitors']))
+
+
+def output_restore_state(restore_state, connector):
+    """Per-output portal restore file beside the legacy single-output one.
+
+    KDE grants and restores screen sharing per screen, and a token is
+    rotated on every use, so each output keeps its own.
+    """
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}', connector):
+        raise ValueError('Unexpected KDE output name')
+    path = Path(restore_state)
+    return path.with_name('%s.%s%s' % (path.stem, connector, path.suffix))
 
 
 def plasma_state():

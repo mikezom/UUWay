@@ -689,32 +689,60 @@ def fcitx_run(ctx):
 
 # --------------------------------------------------------------------- step: portal
 
-def portal_done(ctx):
+def has_token(path):
     try:
-        has_token = ctx.restore_state.stat().st_size > 0
+        return path.stat().st_size > 0
     except OSError:
-        has_token = False
-    return has_token and not getattr(ctx.args, 'regrant_screen', False)
+        return False
+
+
+def kde_output_grants(ctx):
+    """(connector, restore file) for every output KDE streams, primary first."""
+    from desktop_backend import output_restore_state, plasma_layout, plasma_state
+    return [(item['connector'], output_restore_state(ctx.restore_state, item['connector']))
+            for item in plasma_layout(plasma_state())['monitors']]
+
+
+def portal_done(ctx):
+    if getattr(ctx.args, 'regrant_screen', False):
+        return False
+    if plasma_wayland():
+        return all(has_token(path) for _, path in kde_output_grants(ctx))
+    return has_token(ctx.restore_state)
+
+
+def grant_screen(ctx, path, extra=()):
+    backup = None
+    if getattr(ctx.args, 'regrant_screen', False) and path.exists() and not ctx.dry_run:
+        backup = path.with_name(path.name + f'.before-{int(time.time())}')
+        path.rename(backup)
+    try:
+        ctx.run([PYTHON, ROOT / 'scripts/probe-wayland-portal.py', '--capture-check',
+                 '--restore-state', path, *extra])
+        if not ctx.dry_run and not has_token(path):
+            raise SetupError('没有保存屏幕共享授权，请重新运行并勾选「记住」。')
+    except (SetupError, OSError):
+        if backup is not None and not path.exists():
+            backup.rename(path)  # keep the working grant when the new one failed
+        raise
 
 
 def portal_run(ctx):
     if not ctx.dry_run:
         ctx.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    backup = None
-    if getattr(ctx.args, 'regrant_screen', False) and ctx.restore_state.exists() and not ctx.dry_run:
-        backup = ctx.restore_state.with_name(ctx.restore_state.name + f'.before-{int(time.time())}')
-        ctx.restore_state.rename(backup)
+    if plasma_wayland():
+        grants = kde_output_grants(ctx)
+        info(f'接下来会为 {len(grants)} 块显示器各授权一次屏幕共享：每次只选择提示的那块显示器，并勾选「记住」。')
+        for connector, path in grants:
+            if has_token(path) and not getattr(ctx.args, 'regrant_screen', False):
+                continue
+            info(f'请在屏幕共享对话框里选择 {connector}。')
+            grant_screen(ctx, path, ('--expect-output', connector))
+        ok('屏幕共享已授权：' + '、'.join(connector for connector, _ in grants))
+        return
     info('接下来会检查屏幕共享：请选择一块显示器，并勾选「记住」。')
     info('运行后，UU 可切换本次 GNOME 会话的所有活动显示器，包括之后创建的超级屏。')
-    try:
-        ctx.run([PYTHON, ROOT / 'scripts/probe-wayland-portal.py', '--capture-check',
-                 '--restore-state', ctx.restore_state])
-        if not ctx.dry_run and not (ctx.restore_state.is_file() and ctx.restore_state.stat().st_size):
-            raise SetupError('没有保存屏幕共享授权，请重新运行并勾选「记住」。')
-    except (SetupError, OSError):
-        if backup is not None and not ctx.restore_state.exists():
-            backup.rename(ctx.restore_state)  # keep the working grant when the new one failed
-        raise
+    grant_screen(ctx, ctx.restore_state)
     ok('屏幕共享已授权')
 
 
@@ -1377,8 +1405,17 @@ def command_doctor(args):
     check('ok' if signed_in(ctx) else 'warn', 'UU 已登录')
     check('ok' if powershell_native(ctx) else 'warn', '终端：powershell.exe 覆盖为 native')
     check('ok' if helpers_done(ctx) else 'warn', '辅助程序与终端代理已同步')
-    token = ctx.restore_state
-    check('ok' if token.is_file() and token.stat().st_size else 'warn', '屏幕共享授权', str(token))
+    if plasma_wayland():
+        try:
+            missing = [connector for connector, path in kde_output_grants(ctx) if not has_token(path)]
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+            missing = None
+        check('warn' if missing is None or missing else 'ok', '屏幕共享授权（每块显示器）',
+              '无法读取显示器布局' if missing is None else
+              ('缺少：' + '、'.join(missing) + '；运行 uuway setup 补授权' if missing else str(ctx.state_dir)))
+    else:
+        token = ctx.restore_state
+        check('ok' if has_token(token) else 'warn', '屏幕共享授权', str(token))
     check('ok' if consent_done(ctx) else 'warn', '文字服务授权', str(ctx.text_token))
     config = read_json(ctx.runtime_config)
     check('ok' if config else 'fail', '服务配置', str(ctx.runtime_config))

@@ -369,6 +369,45 @@ class RuntimeStepTests(CliCase):
         self.assertFalse(cli.start_done(ctx))
 
 
+class KdePortalStepTests(CliCase):
+    LAYOUT = dict(outputs=[
+        dict(name='DP-1', connected=True, enabled=True, currentModeId='2', priority=2,
+             modes=[dict(id='2', size=dict(width=2560, height=1440), refreshRate=360.0)],
+             size=dict(width=2560, height=1440), pos=dict(x=2743, y=0), scale=1, rotation=1, replicationSource=0),
+        dict(name='DP-2', connected=True, enabled=True, currentModeId='20', priority=1,
+             modes=[dict(id='20', size=dict(width=3840, height=2160), refreshRate=144.0)],
+             size=dict(width=3840, height=2160), pos=dict(x=0, y=0), scale=1.4, rotation=1, replicationSource=0)])
+
+    def portal(self, **options):
+        ctx = self.record_commands(self.context(**options))
+        with patch.object(cli, 'plasma_wayland', return_value=True), \
+                patch('desktop_backend.plasma_state', return_value=self.LAYOUT):
+            done = cli.portal_done(ctx)
+            ctx.dry_run = True
+            self.quiet(cli.portal_run, ctx)
+        return ctx, done
+
+    def grants(self):
+        return [(c[c.index('--expect-output') + 1], Path(c[c.index('--restore-state') + 1]).name)
+                for c in self.commands if c[1].endswith('probe-wayland-portal.py')]
+
+    def test_each_streamed_output_is_granted_separately_primary_first(self):
+        ctx, done = self.portal()
+        self.assertFalse(done)
+        self.assertEqual(self.grants(), [('DP-2', 'portal-probe.DP-2.json'), ('DP-1', 'portal-probe.DP-1.json')])
+
+    def test_only_missing_output_grants_are_requested(self):
+        self.context().state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        (self.context().state_dir / 'portal-probe.DP-2.json').write_text('{"version":1}')
+        ctx, done = self.portal()
+        self.assertFalse(done)
+        self.assertEqual(self.grants(), [('DP-1', 'portal-probe.DP-1.json')])
+        (ctx.state_dir / 'portal-probe.DP-1.json').write_text('{"version":1}')
+        self.commands.clear()
+        _, done = self.portal()
+        self.assertTrue(done)
+
+
 class StartStepTests(CliCase):
     def test_explicit_restart_is_not_skipped_when_every_service_is_active(self):
         self.active.update(cli.SERVICES)
