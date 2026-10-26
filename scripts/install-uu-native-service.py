@@ -49,7 +49,7 @@ def existing_display_policy(content):
 
 
 def install(bundle, prefix, restore_state, state_parent, text_socket, cursor_mode=None, preserve_display_session=None,
-            kde_readonly=False):
+            kde_readonly=False, backend=None):
     verified = trial.bundle_tools.verify(bundle)
     if not verified.get('native_service_lifetime_included'):
         raise ValueError('Expected a continuous-lifetime capable native bundle')
@@ -145,6 +145,8 @@ if __name__ == '__main__':
     parser.add_argument('--preserve-display-session', action=argparse.BooleanOptionalAction, default=None,
                         help='Keep the installed main-unit policy when omitted; explicit enable requires geometry support')
     parser.add_argument('--kde-readonly', action='store_true', help='KDE: disable unsupported display guardian and remote mode writes')
+    parser.add_argument('--backend', choices=('nvidia', 'amd'),
+                        help='Persist the selected GPU backend in the user runtime config')
     args = parser.parse_args()
     install(args.bundle, args.prefix, args.restore_state, args.state_parent, args.text_socket, args.cursor_mode,
-            args.preserve_display_session, args.kde_readonly)
+            args.preserve_display_session, args.kde_readonly, args.backend)
