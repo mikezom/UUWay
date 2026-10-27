@@ -745,18 +745,52 @@ def grant_screen(ctx, path, extra=()):
         raise
 
 
+def legacy_grant_output(ctx):
+    """The output the single-screen build's grant shares, or None when it cannot be told."""
+    info('正在识别旧版屏幕共享授权对应的显示器；如出现授权窗口，请选择任意一块显示器并勾选「记住」。')
+    result = ctx.run([PYTHON, ROOT / 'scripts/probe-wayland-portal.py', '--capture-check',
+                      '--restore-state', ctx.restore_state, '--identify-output'], capture=True, check=False)
+    if ctx.dry_run:
+        return None
+    try:
+        return json.loads(result.stdout).get('output') if result.returncode == 0 else None
+    except ValueError:
+        return None
+
+
+def portal_run_plasma(ctx):
+    grants = kde_output_grants(ctx)
+    regrant = getattr(ctx.args, 'regrant_screen', False)
+    missing = [(connector, path) for connector, path in grants if regrant or not has_token(path)]
+    legacy = None
+    if missing and not regrant and has_token(ctx.restore_state):
+        # The portal says which screen a restored grant shares, so the old grant
+        # is reused only for that output instead of being assumed or duplicated.
+        identified = legacy_grant_output(ctx)
+        legacy = next((item for item in missing if item[0] == identified), None)
+        if legacy:
+            ok(f'旧版授权对应 {identified}，将继续使用。')
+        else:
+            warn('无法把旧版授权对应到需要授权的显示器，将逐块重新授权。')
+    others = [item for item in missing if item != legacy]
+    if others:
+        info(f'接下来会为 {len(others)} 块显示器各授权一次屏幕共享：每次只选择提示的那块显示器，并勾选「记住」。')
+    for connector, path in others:
+        info(f'请在屏幕共享对话框里选择 {connector}。')
+        grant_screen(ctx, path, ('--expect-output', connector))
+    if legacy and not ctx.dry_run:
+        # Moved only once every other output is granted: until then a failed
+        # grant leaves the running single-screen runtime its working file. A
+        # move, never a copy, because each restore consumes the token.
+        ctx.restore_state.rename(legacy[1])
+    ok('屏幕共享已授权：' + '、'.join(connector for connector, _ in grants))
+
+
 def portal_run(ctx):
     if not ctx.dry_run:
         ctx.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     if plasma_wayland():
-        grants = kde_output_grants(ctx)
-        info(f'接下来会为 {len(grants)} 块显示器各授权一次屏幕共享：每次只选择提示的那块显示器，并勾选「记住」。')
-        for connector, path in grants:
-            if has_token(path) and not getattr(ctx.args, 'regrant_screen', False):
-                continue
-            info(f'请在屏幕共享对话框里选择 {connector}。')
-            grant_screen(ctx, path, ('--expect-output', connector))
-        ok('屏幕共享已授权：' + '、'.join(connector for connector, _ in grants))
+        portal_run_plasma(ctx)
         return
     info('接下来会检查屏幕共享：请选择一块显示器，并勾选「记住」。')
     info('运行后，UU 可切换本次 GNOME 会话的所有活动显示器，包括之后创建的超级屏。')
@@ -1323,6 +1357,10 @@ def command_refresh(args):
         return 1
     with setup_lock(ctx):
         steps = set(REFRESH_STEPS)
+        if plasma_wayland():
+            # Each KDE output needs its own grant before the bridge is stopped,
+            # including on an upgrade from the single-screen build.
+            steps.add('portal')
         if ROOT.resolve() == DEB_ROOT:
             # Remove a source install's immutable per-user menu entry, which
             # otherwise shadows the console delivered by each package update.

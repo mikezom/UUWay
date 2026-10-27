@@ -408,6 +408,91 @@ class KdePortalStepTests(CliCase):
         self.assertTrue(done)
 
 
+class KdeLegacyGrantTests(CliCase):
+    """Upgrades from the single-screen build keep its one portal-probe.json grant."""
+    ONE = dict(outputs=[KdePortalStepTests.LAYOUT['outputs'][1]])
+    TWO = KdePortalStepTests.LAYOUT
+
+    def portal(self, layout, shares='DP-2', identify_code=0, failing=()):
+        """Run the portal step with a fake probe that rotates the token it restores."""
+        ctx = self.context()
+        ctx.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        ctx.restore_state.write_text('{"version":1,"token":"old"}')
+        commands = self.commands
+
+        def run(argv, capture=False, check=True, **kwargs):
+            argv = [str(part) for part in argv]
+            commands.append(argv)
+            path = Path(argv[argv.index('--restore-state') + 1])
+            if '--identify-output' in argv:
+                path.write_text('{"version":1,"token":"rotated"}')
+                return completed(argv, identify_code, json.dumps(dict(frames=10, output=shares)))
+            connector = argv[argv.index('--expect-output') + 1]
+            if connector in failing:
+                raise cli.SetupError('screen sharing was cancelled')
+            path.write_text('{"version":1,"token":"new"}')
+            return completed(argv)
+        ctx.run = run
+        with patch.object(cli, 'plasma_wayland', return_value=True), \
+                patch('desktop_backend.plasma_state', return_value=layout):
+            self.assertFalse(cli.portal_done(ctx))
+            self.quiet(cli.portal_run, ctx)
+            done = cli.portal_done(ctx)
+        return ctx, done
+
+    def dialogs(self):
+        return [c[c.index('--expect-output') + 1] for c in self.commands if '--expect-output' in c]
+
+    def test_single_screen_upgrade_reuses_the_old_grant_without_a_dialog(self):
+        ctx, done = self.portal(self.ONE)
+        self.assertTrue(done)
+        self.assertEqual(self.dialogs(), [])
+        self.assertFalse(ctx.restore_state.exists(), 'moved, not copied')
+        self.assertIn('rotated', (ctx.state_dir / 'portal-probe.DP-2.json').read_text())
+
+    def test_the_old_grant_goes_to_the_screen_it_shares_and_only_the_others_are_asked(self):
+        ctx, done = self.portal(self.TWO, shares='DP-1')
+        self.assertTrue(done)
+        self.assertEqual(self.dialogs(), ['DP-2'])
+        self.assertIn('rotated', (ctx.state_dir / 'portal-probe.DP-1.json').read_text())
+        self.assertIn('new', (ctx.state_dir / 'portal-probe.DP-2.json').read_text())
+
+    def test_a_failed_grant_keeps_the_old_grant_for_the_running_runtime(self):
+        with self.assertRaises(cli.SetupError):
+            self.portal(self.TWO, shares='DP-2', failing=('DP-1',))
+        ctx = self.context()
+        self.assertIn('rotated', ctx.restore_state.read_text())
+        self.assertFalse((ctx.state_dir / 'portal-probe.DP-2.json').exists())
+
+    def test_an_unidentified_old_grant_is_left_alone_and_every_screen_is_asked(self):
+        for options in (dict(identify_code=1), dict(shares='HDMI-A-1')):
+            with self.subTest(**options):
+                self.commands.clear()
+                for leftover in self.context().state_dir.glob('portal-probe*.json'):
+                    leftover.unlink()
+                ctx, done = self.portal(self.TWO, **options)
+                self.assertTrue(done)
+                self.assertEqual(self.dialogs(), ['DP-2', 'DP-1'])
+                self.assertTrue(ctx.restore_state.exists())
+
+    def test_refresh_on_kde_grants_screens_before_the_runtime_stops_the_bridge(self):
+        names = cli.STEP_NAMES
+        self.assertLess(names.index('portal'), names.index('runtime'))
+        ctx_args = Namespace(dry_run=False, yes=True, prefix=self.prefix, restart_services=False,
+                             restart_display=False)
+        with patch.object(cli, 'plasma_wayland', return_value=True), \
+                patch.object(cli, 'check_environment'), \
+                patch.object(cli, 'unit_active', return_value=False), \
+                patch.object(cli, 'run_steps') as run_steps:
+            cli.command_refresh(ctx_args)
+        self.assertIn('portal', run_steps.call_args.args[1])
+        with patch.object(cli, 'check_environment'), \
+                patch.object(cli, 'unit_active', return_value=False), \
+                patch.object(cli, 'run_steps') as run_steps:
+            cli.command_refresh(ctx_args)
+        self.assertNotIn('portal', run_steps.call_args.args[1])
+
+
 class PlasmaOpenTests(CliCase):
     def open(self, fail_login=False):
         ctx = self.record_commands(self.context())

@@ -99,6 +99,18 @@ def expected_output_position(connector, state):
     return position
 
 
+def stream_output(properties, state):
+    """The KScreen output a granted stream shares, told apart by its logical position."""
+    shared = properties.get('position')
+    if shared is None:
+        raise RuntimeError('Screen sharing did not report which screen it shares')
+    outputs = [item for item in state.get('outputs', []) if isinstance(item, dict) and item.get('enabled') is True]
+    matches = [item['name'] for item in outputs if (item['pos']['x'], item['pos']['y']) == tuple(shared)]
+    if len(matches) != 1:
+        raise RuntimeError('Screen sharing did not share exactly one identifiable KDE output')
+    return matches[0]
+
+
 def check_stream_output(properties, connector, position):
     # The portal reports each stream's logical desktop position; that is the
     # only stream property that ties a granted screen to a KScreen output.
@@ -261,6 +273,8 @@ def main():
                         help='Opt-in private file for this probe’s own portal restore token')
     parser.add_argument('--expect-output',
                         help='KDE: refuse a grant for any screen but this KScreen output')
+    parser.add_argument('--identify-output', action='store_true',
+                        help='KDE: report which KScreen output the restored grant shares')
     parser.add_argument('--check-color-fixture', action='store_true',
                         help='Require the separately displayed RGB motion target in the decoded sample')
     args = parser.parse_args()
@@ -301,6 +315,9 @@ def main():
             parser.error('--gpu-relay-fd requires a connected inherited socket')
     if args.expect_output is not None and (args.restore_state is None or args.source != 'monitor'):
         parser.error('--expect-output requires --restore-state and a monitor source')
+    if args.identify_output and (args.restore_state is None or args.source != 'monitor' or
+                                 args.expect_output is not None):
+        parser.error('--identify-output requires --restore-state, a monitor source and no --expect-output')
     expected_position = None
     if args.expect_output is not None:
         from desktop_backend import plasma_state
@@ -411,6 +428,12 @@ def main():
         # discard/roll back the portal's rotated capability. Never print it.
         if args.restore_state and started.get('restore_token'):
             save_restore_token(args.restore_state, started['restore_token'])
+        shared_output = None
+        if args.identify_output and len(streams) == 1:
+            # Identify only after saving: the rotated token stays usable even
+            # when no single output can be named.
+            from desktop_backend import plasma_state
+            shared_output = stream_output(streams[0][1], plasma_state())
         if len(streams) != 1 or not 0 < streams[0][0] <= 0xffffffff:
             raise RuntimeError('Expected exactly one authorized screen stream')
         if streams[0][1].get('source_type') != source_type:
@@ -472,6 +495,8 @@ def main():
                       uu_session_tested=False, physical_session_expected='wayland', cursor_mode=args.cursor_mode,
                       restore_requested=bool(restore_token), portal_start_ms=start_ms,
                       source_type=source_type, source_kind=args.source)
+        if shared_output is not None:
+            report['output'] = shared_output
         print(json.dumps(report, indent=2))
     finally:
         if remote_fd is not None:
