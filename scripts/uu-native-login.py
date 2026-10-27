@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -19,12 +20,16 @@ spec.loader.exec_module(trial)
 LOGIN_DEADLINE_SECONDS = 3600
 # The bootstrap applies the same grace before treating a missing server as gone.
 SERVER_GONE_SECONDS = 15
+# UU's server comes up within seconds; the bootstrap itself never exits, so a
+# start that fails would otherwise keep hosting paused forever.
+SERVER_START_SECONDS = 120
 
 
 class QuitWatcher:
     """UU's tray Quit stops GameViewerServer.exe; while UU runs, Healthd restarts it within seconds."""
 
-    def __init__(self) -> None:
+    def __init__(self, started: float) -> None:
+        self.started = started
         self.seen = False
         self.missing_since: float | None = None
 
@@ -34,7 +39,7 @@ class QuitWatcher:
             self.missing_since = None
             return False
         if not self.seen:
-            return False
+            return now - self.started >= SERVER_START_SECONDS
         if self.missing_since is None:
             self.missing_since = now
         return now - self.missing_since >= SERVER_GONE_SECONDS
@@ -98,7 +103,7 @@ def run(prefix, bundle, state_parent, wait_for_user=False, until_quit=False):
         print('请在 UU 窗口中登录，登录成功后安装向导会自动继续。', flush=True)
         started = time.monotonic()
         restored = False
-        watcher = QuitWatcher()
+        watcher = QuitWatcher(started)
         # A session used to control other computers may legitimately last for hours.
         while not stopping and (until_quit or time.monotonic() - started < LOGIN_DEADLINE_SECONDS):
             if not restored and time.monotonic() - started >= 8:
@@ -116,7 +121,10 @@ def run(prefix, bundle, state_parent, wait_for_user=False, until_quit=False):
             if launcher.poll() is not None:
                 break
             time.sleep(1)
-        success = logged_in(prefix) and not stopping
+        if until_quit and not watcher.seen and not stopping:
+            print(f'UU 没有在 {SERVER_START_SECONDS} 秒内启动（未出现 GameViewerServer.exe），已关闭窗口。',
+                  file=sys.stderr, flush=True)
+        success = logged_in(prefix) and not stopping and (watcher.seen or not until_quit)
     finally:
         failures = trial.cleanup_trial(launcher, None, env, directory, arguments, token, created)
         for sig, handler in previous.items():
